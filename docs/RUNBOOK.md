@@ -84,3 +84,106 @@ make migrate GO=/workspace/toolchains/go/bin/go`. Она завершается 
 telegram=polling, scheduler=ready, ui=buttons. LLM/STT configured; live-проверки
 отдельно в TEST_MATRIX. Процесс Cloud session 93316; это не systemd service.
 HTML preview session 70428, loopback 4173, HTTP 200.
+
+## Развёртывание рядом с LiteLLM — подготовлено, не включено
+
+Удалённый сервер пока **не осмотрен и не изменён**. Повтор SSH из Cloud 16 ноября:
+TCP/22 ECONNREFUSED до авторизации; managed TCP disabled, VPN не настроен.
+Пароль не проверялся на сервере и не передавался в GitHub. Это не доказательство
+того, что SSH выключен на самом сервере. Нужен разрешённый SSH/TCP маршрут из
+среды (например, настроенный VPN); после его появления продолжать с этого checkout.
+
+1. Сначала выполнить `python3 ops/audit-server.py` на сервере по SSH и сохранить
+   JSON вне Git. Скрипт только читает службы, порты, контейнеры, нагрузку, свободные
+   память/диск и занятость целевых путей. Не читает env, пароли, командные строки
+   процессов или конфиги LiteLLM. Пустой blockers не заменяет инженерную проверку.
+2. Определить конкретные LiteLLM, БД и reverse proxy, проверить их health и нагрузку
+   до установки; записать baseline без секретов. Проверить Linux amd64/systemd,
+   поддержку CPU/memory limits, Python/venv и исходящие Telegram/VyceAI/Hugging Face.
+   Начальные консервативные gates: ≥2 CPU, ≥3 GiB MemAvailable, ≥5 GiB свободного
+   диска, свободный loopback 2022. Если ресурсов нет — остановить установку и выбрать
+   размещение STT отдельно, а не отнимать память у LiteLLM или скрыто отключать голос.
+3. После аудита создать отдельные **новые** учётные записи `homequest` (nologin) и
+   `homequest-deploy` (только deployment SSH key, без общих admin/docker групп).
+   При совпадении существующих пользователей/путей сначала разобраться, не перетирать.
+   Корень `/var/lib/homequest-deploy` должен принадлежать root:root 0755; SSH home
+   deploy-пользователя — **другой** каталог `/home/homequest-deploy`. Иначе deploy-user
+   смог бы подменить родительский каталог root-owned backups.
+
+Целевая раскладка после проверки:
+
+| Путь | Владелец/режим | Назначение |
+|---|---|---|
+| /opt/homequest, releases | root:root 0755 | неизменяемые проверенные релизы, current symlink |
+| /opt/homequest/stt-venv, stt-models | root, runtime читает | отдельный venv и pinned small; системный Python/LiteLLM не меняются |
+| /var/lib/homequest | homequest:homequest 0700 | SQLite, lock и временное аудио |
+| /var/lib/homequest-deploy | root:root 0755 | родитель, deploy-user не может подменять entries |
+| /var/lib/homequest-deploy/incoming | homequest-deploy 0700 | архивы релизов после capacity preflight |
+| /var/lib/homequest-deploy/backups | root:root 0700 | последние 7 успешных pre-deploy snapshots |
+| /etc/homequest | root:homequest 0750 | конфиг и операторские gates |
+| secrets.json, runtime.env | root:homequest 0640 | секреты вне Git; runtime.env из ops/runtime.env.example |
+| audit-approved, allow-polling, stt-lock.sha256 | root:root 0644 | аудит, передача consumer, SHA256 requirements-stt.lock |
+| /usr/local/sbin/homequest-deploy | root:root 0755 | проверенный ops/deploy.py, не обновляется CI автоматически |
+| /etc/systemd/system/homequest.service | root:root 0644 | ops/homequest.service |
+
+Venv устанавливается только в /opt/homequest/stt-venv из requirements-stt.lock
+(`pip install --only-binary=:all: -r requirements-stt.lock`). Модель — штатным
+scripts/setup-stt.py с STT_MODEL_DIR. Нет Docker/Redis, изменения firewall/nginx,
+общего pip install, upgrade ОС или рестарта LiteLLM. Проверить реальный STT и
+потребление ресурсов до включения polling. CPUQuota=100% ограничивает HomeQuest
+одним ядром, MemoryMax=1536M; это предполагаемые лимиты до измерения на сервере.
+
+После копирования **проверенного** activator на сервер sudoers разрешает только:
+
+```text
+homequest-deploy ALL=(root) NOPASSWD: /usr/local/sbin/homequest-deploy *
+```
+
+Проверить файл через `visudo -cf`; аргумент activator — один SHA из 40 hex
+либо read-only `--check-upload` для проверки ресурсов перед передачей архива.
+Deploy-user не получает sudo shell, systemctl, редактор или доступ к secrets.json.
+Ключ authorized_keys — с `restrict`; root-пароль не используется в CI. SSH host key
+проверяется и закрепляется до передачи ключа в GitHub; StrictHostKeyChecking=yes,
+автоматического доверия новому ключу во время CI нет.
+
+### Передача данных и включение автодеплоя
+
+- Создать root-owned audit-approved только после рассмотрения отчёта и baseline.
+- Остановить **наш** Cloud consumer, убедиться в завершении, сделать свежий SQLite
+  backup и перенести его по SSH в /var/lib/homequest/donetick.db (0600, homequest).
+  Перенести секреты защищённым каналом, не в artifact/log; проверить webhook.
+- Только после остановки старого consumer создать allow-polling. Первый запуск
+  выполнить тем же activator; дождаться database/scheduler ready, telegram polling.
+  Повторить health/нагрузку LiteLLM/БД/proxy и сравнить baseline. При ухудшении
+  остановить только HomeQuest; выяснить причину, не перезапускать соседние службы.
+- В GitHub environment `homequest-production` настроить отдельные secrets:
+  HOMEQUEST_DEPLOY_HOST, HOMEQUEST_DEPLOY_KEY, HOMEQUEST_DEPLOY_KNOWN_HOSTS.
+  Ограничить deployment branch до codex/homequest-mvp. Включить repository variable
+  HOMEQUEST_DEPLOY_ENABLED=true и убрать явный `false` guard job **после** первого
+  успешного handoff/проверки LiteLLM.
+  До этого deploy job пропускается; GitHub environment/ключи сейчас не созданы.
+- CI собирает Linux amd64 без CGO, после всех checks упаковывает только 6 runtime
+  файлов и manifest SHA256. `ops/package.py`; artifact хранится 7 дней, без БД/ключей.
+  Deploy ждёт checks, сериализуется, пропускает устаревший commit и использует pinned
+  SSH host key. На сервере второй deploy блокирует flock. Авто-merge отсутствует.
+
+Активация: ограниченный upload → root-owned копия → whitelist/checksums/commit →
+остановка **только homequest.service** → SQLite backup → migration как homequest →
+atomic current symlink → start → readiness. При изменении STT lock rollout запрещён
+до отдельного обновления venv. Сохраняются 3 последних релиза (плюс current) и 7
+snapshots; cleanup только после успешного health. До upload и активации проверяются ≥2 GiB MemAvailable и запас
+диска для archive/release/backup; это не заменяет мониторинг размера рабочей БД.
+
+При migration failure новая версия ещё не запускалась: восстанавливается snapshot
+и запускается предыдущий код. При startup/readiness failure новая версия могла
+принять Telegram updates: сервис останавливается, **БД не откатывается**, snapshot и
+candidate сохраняются. Оператор выбирает совместимый код или миграцию вперёд;
+обычный restore старого snapshot здесь может потерять данные и требует отдельного
+решения. Внешние сервисы и их данные activator не изменяет.
+
+GitHub доступ к коду/PR есть, но текущий CLI integration token получает HTTP 403
+Resource not accessible by integration на Actions variables API и Secrets public-key API. Управление
+Actions secrets/variables через установленный connector не предоставлено. До
+выдачи этого отдельного scope/настройки владельцем CI credentials не установлены.
+Обычный repository admin/push статус сам по себе не доказывает эти API permissions.
+Поэтому у deploy job есть явный false guard: публикация подготовки ничего не запускает.

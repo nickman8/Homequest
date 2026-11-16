@@ -13,8 +13,58 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - run: python3 -m unittest discover -s tests/ops -v
       - run: make test widgets
       - run: npm install --global corepack
       - run: ./scripts/setup-widget-harness.sh
       - run: cd .tools/widget-sandbox && corepack pnpm exec playwright install-deps chromium
       - run: make harness
+
+      - name: Package tested runtime
+        if: github.event_name == 'push' && github.ref == 'refs/heads/codex/homequest-mvp'
+        run: |
+          CGO_ENABLED=0 go build -trimpath -o bin/homequest ./cmd/homequest
+          CGO_ENABLED=0 go build -trimpath -o bin/homequest-migrate ./cmd/homequest-migrate
+          python3 ops/package.py
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push' && github.ref == 'refs/heads/codex/homequest-mvp'
+        with:
+          name: homequest-runtime-${{ github.sha }}
+          path: dist/*.tar
+          retention-days: 7
+          if-no-files-found: error
+  deploy:
+    needs: checks
+    # Remains disabled until live server audit, SSH credentials and poller handoff.
+    if: ${{ false && github.event_name == 'push' && github.ref == 'refs/heads/codex/homequest-mvp' && vars.HOMEQUEST_DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: homequest-production
+    concurrency:
+      group: homequest-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Skip a superseded commit
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/codex/homequest-mvp" --jq '.object.sha')
+          if [ "$current" = "$GITHUB_SHA" ]; then
+            echo 'deploy=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'deploy=false' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/download-artifact@v4
+        if: steps.latest.outputs.deploy == 'true'
+        with:
+          name: homequest-runtime-${{ github.sha }}
+          path: dist
+      - name: Deploy verified release
+        if: steps.latest.outputs.deploy == 'true'
+        env:
+          DEPLOY_HOST: ${{ secrets.HOMEQUEST_DEPLOY_HOST }}
+          DEPLOY_KEY: ${{ secrets.HOMEQUEST_DEPLOY_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.HOMEQUEST_DEPLOY_KNOWN_HOSTS }}
+        run: bash ops/deploy-from-ci.sh

@@ -71,3 +71,19 @@ scheduler=ready, ui=buttons, llm/stt=configured. HTML preview HTTP 200 на 4173
 карточки (628px). Добавлены компактная шапка и пагинация длинного текста; предел
 600px сохранён, проверка расширена до 200px/font20. Это исправление общего HTML,
 доменные данные и обработчики не менялись.
+
+## Перенос на сервер LiteLLM и автодеплой
+
+Запрошен владельцем после HTML-этапа. SSH повторно не достигает авторизации:
+ECONNREFUSED, managed TCP disabled/VPN отсутствует. Сервер не изменялся, безопасность
+соседства с LiteLLM не подтверждена, текущий Cloud consumer не остановлен.
+Подготовлены read-only аудит, изолированный systemd unit, проверяемый архив релиза,
+activator с backup/миграцией/health и корректным отказом от потери новых фактов при
+неудачном старте, GitHub deploy job после checks. Job выключен до server audit и
+настройки отдельного deployment key. Нельзя считать эту подготовку выполненным
+серверным запуском. Точный порядок и единственный сетевой блокер — RUNBOOK.
+
+Дополнительный блокер настройки CI: текущий GitHub CLI integration token не имеет
+Actions variables/Secrets public-key access (HTTP 403); connector разрешает код/PR, но не предоставляет
+методов управления Actions secrets/variables. Job явно выключен false guard,
+секреты сервера в GitHub не передавались.

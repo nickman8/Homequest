@@ -76,3 +76,7 @@ CPU int8, 2 потока, одна обработка одновременно, 
 [Матрица тестов](docs/TEST_MATRIX.md) · [Дизайн](docs/DESIGN.md) · [Runbook](docs/RUNBOOK.md).
 Upstream LICENSE/NOTICE сохранены. БД, реальные ключи и исходное секретное задание
 не должны попадать в Git, CI или публичные отчёты.
+
+Серверный запуск рядом с LiteLLM и GitHub autodeploy подготовлены в `ops/` и
+[RUNBOOK](docs/RUNBOOK.md#развёртывание-рядом-с-litellm--подготовлено-не-включено).
+Deploy job выключен до аудита сервера и передачи единственного polling consumer.

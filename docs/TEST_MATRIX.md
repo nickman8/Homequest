@@ -91,3 +91,15 @@ CI первого HTML checkpoint выявил другое поведение �
 После исправления шрифтов полный локальный `make harness` повторно PASS: все
 compatibility/E02/product layouts, включая 200px/font20, feedback/pagination и
 browser bridge. Go backend с прошлого зелёного `make test` не менялся.
+
+Deployment preparation: `python3 -m unittest discover -s tests/ops -v` — PASS:
+archive whitelist/links/path traversal/checksums/commit, права при umask 077,
+успешная активация, migration rollback до старта и сохранение accepted updates
+при readiness failure. SQLite и filesystem настоящие временные; systemctl,
+migration и health в этих tests контролируемые. Это не live server deployment.
+`bash -n ops/deploy-from-ci.sh` PASS. Проверка systemd unit внутри Cloud упёрлась
+в read-only /run/systemd; фактическая установка/применение лимитов пока не проверены.
+Дополнительно PASS: отказ до остановки сервиса при нехватке диска и ограниченная
+retention, не удаляющая посторонние пути. Всего 9 ops tests. Реальный упакованный
+CGO-disabled homequest-migrate выполнен на пустой SQLite и повторно на той же БД:
+оба запуска PASS. Архив ~136 MB, только явный whitelist; секретов/БД в нём нет.
