@@ -16,6 +16,8 @@ import (
 	"time"
 )
 
+const agentConsentScope = "agent_v2"
+
 type AIConsent struct {
 	Scope    string
 	Provider string
@@ -90,7 +92,7 @@ func (b *Bot) enqueueAI(uid int64, text, voice string) error {
 	_ = b.DB.First(&consent, "user_id = ?", uid).Error
 	scope := ""
 	if b.Agent != nil {
-		scope = "agent_v1"
+		scope = agentConsentScope
 	}
 	state := "queued"
 	if !consent.Accepted || consent.Provider != b.AIProvider || consent.Scope != scope {
@@ -117,7 +119,7 @@ func (b *Bot) enqueueAI(uid int64, text, voice string) error {
 	if state == "consent" {
 		notice := "Голос распознаётся локально. Если VyceAI доступен, текст и названия заданий передаются ему для понимания. Продолжить?"
 		if job.Agent {
-			notice = "Голос распознаётся локально. VyceAI получит текст, задачи, участников, комнаты и до 4 прошлых обращений. Память сбрасывается после суток без обращений; её можно очистить. Продолжить?"
+			notice = "Голос распознаётся локально. VyceAI получит текст, участников, комнаты, нужные задания, покупки, награды, баллы и до 4 прошлых обращений. Память сбрасывается после суток без обращений; её можно очистить. Продолжить?"
 		}
 		return b.card(uid, 0, "Помощник по дому", notice, h.ID, fmt.Sprintf("ai_consent:%d", job.ID), "Понятно, продолжить", fmt.Sprintf("ai_cancel:%d", job.ID), "Отмена")
 	}
@@ -154,7 +156,7 @@ func (b *Bot) aiAction(uid, msg int64, a Action) (bool, error) {
 		if job.State != "consent" {
 			return true, b.home(uid, msg)
 		}
-		if job.Provider != b.AIProvider {
+		if job.Provider != b.AIProvider || (job.Agent && job.ConsentScope != agentConsentScope) {
 			return true, b.say(uid, "Помощник обновился. Отправьте сообщение заново, чтобы подтвердить обработку текста.")
 		}
 		if e = b.DB.Save(&AIConsent{UserID: uid, Accepted: true, Provider: b.AIProvider, Scope: job.ConsentScope}).Error; e != nil {
@@ -219,7 +221,7 @@ func (b *Bot) ProcessAI(ctx context.Context) error {
 			return child.say(job.Viewer, "Помощник не смог безопасно обработать сообщение. Ничего не изменено; используйте кнопки или уточните фразу.")
 		})
 	}
-	if job.Provider != b.AIProvider {
+	if job.Provider != b.AIProvider || (job.Agent && job.ConsentScope != agentConsentScope) {
 		return fail()
 	}
 	home, e := b.Family.View(job.Viewer, job.CircleID)

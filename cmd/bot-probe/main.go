@@ -139,8 +139,10 @@ func main() {
 	var familyID int
 	needed, boughtCount := 0, 0
 	var openTasks any
+	var members any
 	if h, e := app.Family.Current(input.Viewer); e == nil {
 		familyID = h.ID
+		members = h.Members
 		openTasks, _ = (&task.Service{DB: db}).List(input.Viewer, h.ID)
 		purchases, _ := (&shopping.Service{DB: db}).List(input.Viewer, h.ID, false)
 		needed = len(purchases)
@@ -151,7 +153,7 @@ func main() {
 	}
 	var deliveries []bot.Delivery
 	db.Where("viewer=? AND id>?", input.Viewer, before).Order("id").Find(&deliveries)
-	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"tasks_open": openTasks, "shopping_needed": needed, "shopping_bought": boughtCount, "sent": transport.Sent, "deliveries": deliveries, "state": state, "payload": payload, "balance": balance, "week": summary.Week, "xp": summary.XP, "family_id": familyID, "update_id": input.UpdateID, "at": app.Now()})
+	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"tasks_open": openTasks, "members": members, "shopping_needed": needed, "shopping_bought": boughtCount, "sent": transport.Sent, "deliveries": deliveries, "state": state, "payload": payload, "balance": balance, "week": summary.Week, "xp": summary.XP, "family_id": familyID, "update_id": input.UpdateID, "at": app.Now()})
 }
 
 type captureAPI struct{ Sent []map[string]any }

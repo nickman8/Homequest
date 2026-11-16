@@ -116,7 +116,7 @@ Go suite/build и plans HTML повторены. Live VyceAI eval 10/10 PASS (42
 | `TestAgentClarificationCannotConfirmAnOlderPlan` | Новая реплика/вопрос отменяет старое pending intent; последующее «да» не применяет старый план | PASS после воспроизведённого падения |
 | `tests/agent-e2e.mts` (в `make harness`) | Реальный HTML/Playwright → handlers → Eino tools → SQLite; две семьи, разные комнаты участников, batch/replay, голосовые fixtures, stale scope/versions, expiry, stop/reset | PASS, 67 состояний; Browser bridge, отдельно от настоящего Telegram |
 | `tests/agent-widget.mts` | Официальный QuickJS/DOM renderer: жест подтверждения → реальный request → handlers/SQLite → обновлённый state → rendering; создание в выбранной комнате и перенос; 200/320/390px dark | PASS, 6 связанных операций; модель offline, UI и domain реальные |
-| `tests/e2e-runtime.mts` | Все различные проекции пяти HTML-путей, включая новые карточки агента, в официальном renderer; 200px плюс 24 theme/width комбинации | PASS, 150 различных проекций; изображения agent-plan/agent-context без пользовательских данных |
+| `tests/e2e-runtime.mts` | Все различные проекции шести HTML-путей, включая новые карточки агента, в официальном renderer; 200px плюс 24 theme/width комбинации | PASS, 180 различных проекций; изображения agent-plan/agent-context без пользовательских данных |
 | `HQ_AGENT_LIVE=1 HOMEQUEST_SECRETS_FILE=/absolute/private/secrets.json go test ./internal/homequest/agent -run TestLiveEinoRoomPlan -count=1 -v` | Реальный VyceAI/DeepSeek → Eino tool calls → выбранная кухня при одинаковых названиях → preview/apply в временной SQLite | Первый запуск PASS 16.11.2026, 10.02s. Два последующих запроса — gateway timeout около 25s; минимальный completion также timeout. Нет production-записей, STT/Telegram не проверены |
 | `go test -race ./internal/homequest/agent/... ./internal/homequest/bot` | Гонки runtime, domain и handlers | PASS; после добавления конкурентного apply отдельно повторён agent race |
 
@@ -127,3 +127,32 @@ wishlist, администрирования и других оставшихс�
 Дополнительные регрессии агента: неподдерживаемые поля операции отвергаются (нельзя
 молча потерять требование фото); preview показывает фактическую комнату каждой
 задачи; новое содержательное обращение снимает старый pending plan.
+
+## Расширение агента: покупки, награды и полное создание задания
+
+| Проверка | Что подтверждает | Ограничение |
+|---|---|---|
+| `go test ./internal/homequest/agent` | Preview без записей; stale price/status; конкуренция покупки; повторное списание/refund; недостаточный баланс после preview; уход участника; rollback полного создания с неверным reviewer | Реальная SQLite, без внешней модели |
+| `go test ./internal/homequest/bot -run TestAgentOldConsent` | Запрос предыдущего scope согласия не вызывает расширенный агент | Контролируемая модель |
+| `tests/agent-resources-e2e.mts` | Все 14 commerce-изменений, reviewer и полное task_create, account read; HTML → Eino tools → SQLite; чужая бронь/семья/ID, отрицание, stale price, replay, архив каталога при заявке, запрет refund после выдачи, исходный refund, два статуса заявок, фото и reviewer | 94 HTML-состояния; модель/STT offline; не настоящий Telegram |
+| `tests/agent-widget.mts` | Дополнительно shopping_add/buy, task_complete, reward_create/request через настоящий жест официального renderer и обновлённую БД/карточку | 21 связанная операция, 200/320/390px dark; offline model |
+
+Чтение `read_resources` возвращает только разрешённую проекцию текущей семьи,
+не содержит Telegram IDs, receipt keys, фото или wishlist. Покупки/награды общие
+для дома и не фильтруются выбранной комнатой. Полный паритет всех UI-действий
+инструментам агента пока не заявлен.
+
+Live-проверки новой версии 16.11.2026: `TestLiveEinoRoomPlan` PASS 6.27 s;
+`TestLiveEinoRewardPlan` PASS 19.33 s. Обе запускаются с `HQ_AGENT_LIVE=1` и
+`HOMEQUEST_SECRETS_FILE`; реальный gateway, модель и инструменты, синтетическая
+SQLite, без Telegram и STT. Первый проверяет выбранную комнату, второй — чтение
+каталога, snapshot, отсутствие списания до confirmation и идемпотентное списание.
+
+Итог локальных проверок этого этапа: `go test ./...` и
+`go test -race ./internal/homequest/agent/... ./internal/homequest/bot` — PASS.
+Все ступени harness пройдены: 174 household + 101 plans + 80 shopping +
+43 legacy assistant + 67 room agent + 94 expanded agent = 559 HTML-состояний.
+После последнего добавления read_account бинарники пересобраны и затронутые
+agent HTML/linked/runtime ступени повторены: PASS. Официальный renderer:
+180 различных проекций на 200px, ещё 24 theme/width сочетания, 21 связанная
+операция агента. Это не live Telegram и не проверка человеческого аудио.

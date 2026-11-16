@@ -51,14 +51,16 @@ type Context struct {
 	History    []Turn          `json:"recent_conversation"`
 }
 type Task struct {
-	ID         int        `json:"id"`
-	Version    int        `json:"version"`
-	Name       string     `json:"name"`
-	Points     int        `json:"points"`
-	DueAt      *time.Time `json:"due_utc"`
-	AssignedTo *int       `json:"assigned_to"`
-	Approval   bool       `json:"requires_approval"`
-	Photo      bool       `json:"requires_photo"`
+	Description *string    `json:"description,omitempty"`
+	Reviewer    *int       `json:"reviewer,omitempty"`
+	ID          int        `json:"id"`
+	Version     int        `json:"version"`
+	Name        string     `json:"name"`
+	Points      int        `json:"points"`
+	DueAt       *time.Time `json:"due_utc"`
+	AssignedTo  *int       `json:"assigned_to"`
+	Approval    bool       `json:"requires_approval"`
+	Photo       bool       `json:"requires_photo"`
 }
 type Service struct{ DB *gorm.DB }
 
@@ -224,7 +226,7 @@ func (s *Service) Tasks(c Context, room int, now time.Time) ([]Task, error) {
 		if e = s.DB.First(&definition, "id=? AND circle_id=?", i.ChoreID, c.CircleID).Error; e != nil {
 			return nil, e
 		}
-		out = append(out, Task{ID: r.ID, Version: i.Version, Name: r.Name, Points: r.Points, DueAt: r.DueAt, AssignedTo: r.AssignedTo, Approval: definition.RequireApproval, Photo: rule.PhotoRequired})
+		out = append(out, Task{ID: r.ID, Version: i.Version, Name: r.Name, Points: r.Points, DueAt: r.DueAt, AssignedTo: r.AssignedTo, Approval: definition.RequireApproval, Photo: rule.PhotoRequired, Description: definition.Description, Reviewer: rule.ReviewerID})
 	}
 	return out, nil
 }

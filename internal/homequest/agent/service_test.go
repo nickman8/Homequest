@@ -2,6 +2,7 @@ package agent
 
 import (
 	"donetick.com/core/internal/homequest/family"
+	"donetick.com/core/internal/homequest/shopping"
 	"donetick.com/core/internal/homequest/task"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -254,8 +255,8 @@ func TestMemoryTTLAndPlanApplyAfterRevocation(t *testing.T) {
 func TestPlanCannotSilentlyIgnoreRequestedFields(t *testing.T) {
 	s, _, now := setup(t)
 	scope, _ := s.Context(alice, now)
-	if _, e := s.Prepare(scope, "unsupported-create-field", []Change{{Operation: "task_create", Name: "Обязательное фото", Points: 10, Photo: true}}, now); e == nil {
-		t.Fatal("photo requirement silently discarded")
+	if _, e := s.Prepare(scope, "unsupported-create-field", []Change{{Operation: "task_create", Name: "Неподдерживаемая покупка", Points: 10, Items: []shopping.Input{{Name: "Фото"}}}}, now); e == nil {
+		t.Fatal("unsupported shopping fields silently discarded")
 	}
 	var n int64
 	s.DB.Model(&task.Instance{}).Count(&n)

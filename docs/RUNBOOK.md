@@ -4,7 +4,7 @@
 `/workspace/homequest-private/runtime/donetick.db`, секреты
 `/workspace/homequest-private/secrets.json` (0600), лог `bot.log` в private-каталоге.
 Никакие из этих приватных файлов не входят в Git. SQLite backup перед последним
-обновлением: `/workspace/homequest-private/runtime/before-agent-20261116.db`.
+обновлением: `/workspace/homequest-private/runtime/before-agent-commerce-20261116.db`.
 
 Проверять health при каждом возобновлении. Код обновляется после тестов, с backup
 и остановкой только собственного polling consumer. Доступность после завершения
@@ -45,7 +45,9 @@ AI: очередь до 16, один worker, лимиты 100/500 в сутки 
 STT timeout 90s; локальное аудио удаляется после запуска. Не выводить raw HTTP
 исключения. VyceAI endpoint и проверенный model ID заданы в приватном конфиге через прежние
 NICKLLM_* имена. Для smoke использовать scripts/preflight.py и opt-in TestLive
-из TEST_MATRIX. При смене gateway согласие на обработку запрашивается снова.
+из TEST_MATRIX. При смене gateway или scope передаваемых данных согласие запрашивается снова.
+Текущий scope `agent_v2` включает покупки, награды и баллы. Queued-запросы со старым
+scope не отправляются расширенному агенту; пользователь повторяет просьбу.
 
 `AI_MODE=agent` включает готовый Eino runtime: максимум 6 model iterations,
 12 tool calls и 75 секунд на запрос (25 секунд на HTTP-вызов). Текст/voice используют
@@ -91,15 +93,15 @@ http://127.0.0.1:4173. Это loopback-стенд с временной SQLite �
 make migrate GO=/workspace/toolchains/go/bin/go`. Она завершается после миграций,
 не обращается в Telegram и не запускает workers. Повтор безопасен.
 
-Проверено 2026-11-16 11:25 UTC: запущен код 548d608; health:
-database=ready, telegram=polling, scheduler=ready, ui=buttons. LLM/STT configured;
-это не live voice smoke. Cloud session 31016, PID при запуске 207077;
-это не systemd service. Перед стартом проверено отсутствие другого локального
-процесса; создан приватный SQLite snapshot
-`/workspace/homequest-private/runtime/before-household-plans-20261116.db` (0600).
-Миграции выполнены дважды на существующей БД, оба раза успешно.
-getMe/webhook/models HTTP 200, webhook отсутствует. Временный Cloud-процесс
-может остановиться вместе со средой: всегда проверять health перед использованием.
+Проверено 2026-11-16 около 16:39 UTC: запущена сборка расширенного агента;
+health: database=ready, telegram=polling, scheduler=ready, ui=buttons,
+llm=agent_configured, stt=configured. Cloud session 9010, PID при запуске 332654;
+это не systemd service. До запуска предыдущий процесс уже завершился; новый
+consumer единственный. Создан приватный snapshot
+`/workspace/homequest-private/runtime/before-agent-commerce-20261116.db` (0600).
+Миграции и запуск на существующей БД успешны, getMe/webhook/models HTTP 200,
+webhook отсутствует. Cloud-процесс может остановиться вместе со средой:
+проверять health перед использованием. Человеческий voice smoke ещё не выполнен.
 
 Недельный итог планируется по понедельникам в 09:00 семьи в пределах 5 минут,
 только если за прошлую неделю были принятые дела. Пропущенные недели не рассылаются.

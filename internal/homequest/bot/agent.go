@@ -26,12 +26,26 @@ func (a agentAccess) Tasks(room int) ([]agent.Task, error) {
 	}
 	return (&agent.Service{DB: a.bot.DB}).Tasks(a.scope, room, a.bot.Now())
 }
+func (a agentAccess) Resources(kind string) ([]agent.Resource, error) {
+	var job AIJob
+	if a.bot.DB.First(&job, "id=? AND state=?", a.job.ID, "processing").Error != nil {
+		return nil, agent.ErrPlan
+	}
+	return (&agent.Service{DB: a.bot.DB}).Resources(a.scope, kind, a.bot.Now())
+}
+func (a agentAccess) Account() (agent.Account, error) {
+	var job AIJob
+	if a.bot.DB.First(&job, "id=? AND state=?", a.job.ID, "processing").Error != nil {
+		return agent.Account{}, agent.ErrPlan
+	}
+	return (&agent.Service{DB: a.bot.DB}).Account(a.scope, a.bot.Now())
+}
 func (b *Bot) agentHome(uid, msg int64) error {
 	c, e := (&agent.Service{DB: b.DB}).Context(uid, b.Now())
 	if e != nil {
 		return b.home(uid, msg)
 	}
-	text := c.Label() + "\nЗадания, сроки, повторения и покупки — текстом или голосом. Изменения сначала покажу для проверки."
+	text := c.Label() + "\nЗадания, сроки, повторения, покупки и награды — текстом или голосом. Изменения сначала покажу для проверки."
 	if b.Agent == nil {
 		text = c.Label() + "\nПолный режим агента пока выключен. Доступен прежний помощник для выполнения и создания заданий."
 	}

@@ -214,3 +214,25 @@ func TestAgentClarificationCannotConfirmAnOlderPlan(t *testing.T) {
 		t.Fatal("yes after a different request applied the older plan")
 	}
 }
+
+type countedAgent struct{ calls int }
+
+func (a *countedAgent) Run(context.Context, agent.Context, string, agent.Access) (agent.Proposal, error) {
+	a.calls++
+	return agent.Proposal{Reply: "Ответ"}, nil
+}
+func TestAgentOldConsentCannotEnableExpandedTools(t *testing.T) {
+	j := newJourney(t)
+	j.create(900001, "Тёплый дом", "UTC")
+	engine := &countedAgent{}
+	j.b.Agent = engine
+	j.send(900001, "Что купить?", "")
+	var job AIJob
+	j.db.Order("id DESC").First(&job)
+	// Simulate a queued request persisted by the previous release, not a domain result.
+	j.db.Model(&job).Updates(map[string]any{"consent_scope": "agent_v1", "state": "queued"})
+	process(t, j)
+	if engine.calls != 0 {
+		t.Fatal("old consent permitted new external context")
+	}
+}

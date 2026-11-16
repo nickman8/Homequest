@@ -15,6 +15,9 @@ import (
 )
 
 type Change struct {
+	AssignedTo  *int             `json:"assigned_to,omitempty" jsonschema:"description=Member ID for task_create; omit for shared task"`
+	Reviewer    *int             `json:"reviewer,omitempty" jsonschema:"description=Member ID for task_create with approval; omit for any other adult"`
+	Snapshot    string           `json:"snapshot,omitempty" jsonschema:"description=Exact snapshot from read_resources for an existing shopping item, reward or redemption"`
 	Operation   string           `json:"operation" jsonschema:"description=One operation from the provided catalog"`
 	ID          int              `json:"id,omitempty"`
 	Version     int              `json:"version,omitempty"`
@@ -37,7 +40,7 @@ type Capability struct {
 
 // Catalog is shared by validation, discovery and the model. No arbitrary code/SQL tool.
 var Catalog = []Capability{
-	{"task_create", "Создать задание: name, points; target=комната (0 — выбранная), schedule/due необязательны", "new"},
+	{"task_create", "Создать задание: name, points; target=комната (0 — выбранная); schedule/due, assigned_to, description, approval, photo, reviewer необязательны", "new"},
 	{"task_edit", "Изменить название/баллы (пустое name или 0 points сохраняет поле)", "task"},
 	{"task_due", "Перенести срок: due в локальном времени семьи, расписание сохраняется", "task"},
 	{"task_schedule", "Изменить повторение: schedule", "task"},
@@ -45,6 +48,7 @@ var Catalog = []Capability{
 	{"task_room", "Переместить в комнату: target; 0 — без комнаты", "task"},
 	{"task_description", "Описание: description", "task"},
 	{"task_configure", "Правила: approval и photo, оба значения задаются явно", "task"},
+	{"task_reviewer", "Назначить проверяющего: target; 0 — любой другой взрослый", "task"},
 	{"task_rotation", "Чередование: members, пустой список — общий пул", "task"},
 	{"task_pause", "Приостановить повторение", "task"},
 	{"task_resume", "Возобновить повторение", "task"},
@@ -52,6 +56,20 @@ var Catalog = []Capability{
 	{"task_complete", "Отправить выполнение; фото/проверка остаются обязательными", "task"},
 	{"room_create", "Добавить комнату: name", "new"},
 	{"shopping_add", "Добавить покупки: items", "new"},
+	{"shopping_edit", "Изменить покупку: items с одной полной позицией name/quantity/note", "shopping"},
+	{"shopping_claim", "Взять покупку на себя", "shopping"},
+	{"shopping_release", "Освободить свою покупку", "shopping"},
+	{"shopping_buy", "Отметить купленным", "shopping"},
+	{"shopping_reopen", "Вернуть купленное в список", "shopping"},
+	{"shopping_archive", "Убрать покупку из списка", "shopping"},
+	{"reward_create", "Добавить награду: name, points (цена), description", "new"},
+	{"reward_edit", "Изменить награду: полные name, points, description", "reward"},
+	{"reward_archive", "Архивировать награду, сохранив заявки", "reward"},
+	{"reward_request", "Запросить награду для себя; списать её текущую цену один раз", "reward"},
+	{"redemption_approve", "Принять чужую заявку на награду", "redemption"},
+	{"redemption_deliver", "Отметить выдачу принятой награды другому участнику", "redemption"},
+	{"redemption_reject", "Отклонить чужую заявку с возвратом исходной суммы", "redemption"},
+	{"redemption_cancel", "Отменить свою заявку до выдачи с возвратом исходной суммы", "redemption"},
 }
 
 func capability(name string) (Capability, bool) {
@@ -149,6 +167,7 @@ func (s *Service) Prepare(c Context, request string, changes []Change, now time.
 }
 func (s *Service) validateTargets(p Plan, changes []Change) error {
 	seen := map[int]int{}
+	resources := map[string]bool{}
 	for _, v := range changes {
 		if e := validateFields(v); e != nil {
 			return e
@@ -160,7 +179,27 @@ func (s *Service) validateTargets(p Plan, changes []Change) error {
 		if len([]rune(v.Name)) > 100 || len([]rune(v.Description)) > 1000 || len(v.Due) > 32 || len(v.Members) > 20 || len(v.Items) > 10 {
 			return ErrPlan
 		}
-		if cap.Target == "task" {
+		if resourceTarget(cap.Target) {
+			if v.ID <= 0 || v.Version != 0 || len(v.Snapshot) != 64 {
+				return ErrPlan
+			}
+			key := fmt.Sprintf("%s:%d", cap.Target, v.ID)
+			// One change per resource prevents a preview from charging a price edited
+			// earlier in the same plan. Task chains retain their existing semantics.
+			if resources[key] {
+				return ErrPlan
+			}
+			resources[key] = true
+			r, e := s.resource(p, v)
+			if e != nil {
+				return e
+			}
+			if r.Snapshot != v.Snapshot {
+				return ErrChanged
+			}
+		} else if v.Snapshot != "" {
+			return ErrPlan
+		} else if cap.Target == "task" {
 			var i task.Instance
 			if v.ID <= 0 || v.Version <= 0 || s.DB.First(&i, "id=? AND circle_id=? AND version=? AND closed=? AND pending=?", v.ID, p.CircleID, v.Version, false, false).Error != nil {
 				return ErrChanged
@@ -236,9 +275,8 @@ func (s *Service) execute(p Plan, changes []Change, now time.Time) ([]Effect, er
 		var e error
 		switch v.Operation {
 		case "task_create":
-			var assigned *int
 			var item task.Item
-			item, e = ts.Create(p.Viewer, p.CircleID, v.Name, v.Points, assigned)
+			item, e = ts.Create(p.Viewer, p.CircleID, v.Name, v.Points, v.AssignedTo)
 			if e == nil {
 				r.ID = item.ID
 				r.Status = "created"
@@ -255,6 +293,15 @@ func (s *Service) execute(p Plan, changes []Change, now time.Time) ([]Effect, er
 			}
 			if e == nil && v.Due != "" {
 				e = ts.SetDue(p.Viewer, p.CircleID, item.ID, v.Due)
+			}
+			if e == nil && v.Description != "" {
+				e = ts.SetDescription(p.Viewer, p.CircleID, item.ID, v.Description)
+			}
+			if e == nil && (v.Approval || v.Photo) {
+				e = ts.Configure(p.Viewer, p.CircleID, item.ID, v.Approval, v.Photo)
+			}
+			if e == nil && v.Reviewer != nil {
+				e = ts.SetReviewer(p.Viewer, p.CircleID, item.ID, *v.Reviewer)
 			}
 		case "task_edit":
 			var i task.Instance
@@ -288,6 +335,8 @@ func (s *Service) execute(p Plan, changes []Change, now time.Time) ([]Effect, er
 			e = ts.SetDescription(p.Viewer, p.CircleID, v.ID, v.Description)
 		case "task_configure":
 			e = ts.Configure(p.Viewer, p.CircleID, v.ID, v.Approval, v.Photo)
+		case "task_reviewer":
+			e = ts.SetReviewer(p.Viewer, p.CircleID, v.ID, v.Target)
 		case "task_rotation":
 			e = ts.SetRotation(p.Viewer, p.CircleID, v.ID, v.Members)
 		case "task_pause", "task_resume", "task_cancel":
@@ -306,7 +355,7 @@ func (s *Service) execute(p Plan, changes []Change, now time.Time) ([]Effect, er
 			e = (&shopping.Service{DB: s.DB}).CreateBatch(p.Viewer, p.CircleID, fmt.Sprintf("agent:%s:%d", p.ID, index), v.Items, now)
 			r.Status = "created"
 		default:
-			return nil, ErrPlan
+			r, e = s.executeResource(p, v, index, now)
 		}
 		if e != nil {
 			return nil, e
@@ -354,6 +403,15 @@ func (s *Service) describe(p Plan, changes []Change) (string, error) {
 	}
 	lines := []string{}
 	for _, v := range changes {
+		cap, _ := capability(v.Operation)
+		if resourceTarget(cap.Target) || v.Operation == "reward_create" {
+			text, e := s.describeResource(p, v)
+			if e != nil {
+				return "", e
+			}
+			lines = append(lines, text)
+			continue
+		}
 		name := v.Name
 		var definition ch.Chore
 		if v.ID > 0 {
@@ -400,6 +458,18 @@ func (s *Service) describe(p Plan, changes []Change) (string, error) {
 			if v.Due != "" {
 				text += " · " + v.Due + " (" + h.Timezone + ")"
 			}
+			if v.AssignedTo != nil {
+				text += " · исполнитель: " + member(*v.AssignedTo)
+			}
+			if v.Description != "" {
+				text += " · описание: " + v.Description
+			}
+			if v.Approval || v.Photo {
+				text += " · подтверждение: " + yes(v.Approval) + ", фото: " + yes(v.Photo)
+			}
+			if v.Reviewer != nil {
+				text += " · проверяет: " + member(*v.Reviewer)
+			}
 		case "task_complete":
 			text = "Отправить выполнение: " + text + " (фото и проверка сохраняются)"
 		case "task_schedule":
@@ -408,6 +478,12 @@ func (s *Service) describe(p Plan, changes []Change) (string, error) {
 			}
 		case "task_assign":
 			text += " → " + member(v.Target)
+		case "task_reviewer":
+			if v.Target == 0 {
+				text += " · проверяет любой другой взрослый"
+			} else {
+				text += " · проверяет: " + member(v.Target)
+			}
 		case "task_room":
 			text += " → " + room(v.Target)
 		case "task_configure":
@@ -468,18 +544,24 @@ func scheduleLabel(s task.Schedule) string {
 // Reject fields this operation does not implement: an omitted photo requirement
 // must never turn into a silently accepted ordinary task.
 func validateFields(v Change) error {
-	allowed := map[string]bool{"operation": true, "id": true, "version": true}
+	allowed := map[string]bool{"operation": true, "id": true, "version": true, "snapshot": true}
 	var fields []string
 	switch v.Operation {
 	case "task_create":
-		fields = []string{"name", "points", "target", "schedule", "due"}
+		if v.AssignedTo != nil && *v.AssignedTo <= 0 {
+			return ErrPlan
+		}
+		if v.Reviewer != nil && (!v.Approval || *v.Reviewer <= 0) {
+			return ErrPlan
+		}
+		fields = []string{"name", "points", "target", "schedule", "due", "description", "assigned_to", "reviewer", "approval", "photo"}
 	case "task_edit":
 		fields = []string{"name", "points"}
 	case "task_due":
 		fields = []string{"due"}
 	case "task_schedule":
 		fields = []string{"schedule"}
-	case "task_assign", "task_room":
+	case "task_assign", "task_room", "task_reviewer":
 		fields = []string{"target"}
 	case "task_description":
 		fields = []string{"description"}
@@ -490,8 +572,11 @@ func validateFields(v Change) error {
 	case "task_pause", "task_resume", "task_cancel", "task_complete":
 	case "room_create":
 		fields = []string{"name"}
-	case "shopping_add":
+	case "shopping_add", "shopping_edit":
 		fields = []string{"items"}
+	case "reward_create", "reward_edit":
+		fields = []string{"name", "points", "description"}
+	case "shopping_claim", "shopping_release", "shopping_buy", "shopping_reopen", "shopping_archive", "reward_archive", "reward_request", "redemption_approve", "redemption_deliver", "redemption_reject", "redemption_cancel":
 	default:
 		return ErrPlan
 	}

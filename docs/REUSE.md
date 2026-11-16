@@ -169,3 +169,12 @@ Eino checkpoint не подменяет атомарность: план, дом
 Проверки: service_test.go, bot/agent_test.go, tests/agent-e2e.mts; отдельный opt-in
 TestLiveEinoRoomPlan использует реальный gateway и временную SQLite. MCP SDK пока
 не установлен; полный паритет UI-действий ещё не достигнут.
+
+### Расширение агента: покупки и награды
+
+Новые инструменты непосредственно вызывают уже адаптированные `shopping.Service`,
+`reward.Service` и `task.Service` в одной GORM transaction/savepoint. Использованы
+CreateBatch/Change/List, Create/Edit/Archive/Request/Resolve/Requests, Configure/
+SetReviewer/SetDescription/Create/SetDue/SetSchedule. Новый commerce backend и новая
+БД не добавлялись. Новых сторонних зависимостей нет; пины Eino/Donetick прежние.
+Projection/snapshot/preview находятся в `internal/homequest/agent/resources.go`.

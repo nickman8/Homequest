@@ -8,7 +8,7 @@ var uncertainCompletion = regexp.MustCompile(`(?i)(^|[^а-яё])(не|нет|з�
 
 func ValidateIntent(text string, changes []Change) error {
 	for _, c := range changes {
-		if c.Operation == "task_complete" && uncertainCompletion.MatchString(text) {
+		if (c.Operation == "task_complete" || c.Operation == "shopping_buy" || c.Operation == "redemption_deliver") && uncertainCompletion.MatchString(text) {
 			return ErrPlan
 		}
 	}
