@@ -66,3 +66,8 @@ ACK/error/pagination + browser bridge. Race bot/family/task/reward/wishlist PASS
 Readiness после обновления кода e41b7b6: database=ready, telegram=polling,
 scheduler=ready, ui=buttons, llm/stt=configured. HTML preview HTTP 200 на 4173.
 Это состояние на момент проверки, а не гарантия uptime.
+
+Последующее исправление CI: системный шрифт runner дал переполнение длинной
+карточки (628px). Добавлены компактная шапка и пагинация длинного текста; предел
+600px сохранён, проверка расширена до 200px/font20. Это исправление общего HTML,
+доменные данные и обработчики не менялись.

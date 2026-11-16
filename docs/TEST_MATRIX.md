@@ -83,3 +83,11 @@ widget-feedback.mts проверяет ACK без state, rate limit, timeout, fa
 WIDGET_SANDBOX=/workspace/widget-sandbox` — exit 0. Все перечисленные новые
 проверки и browser bridge PASS. `getMe/getWebhookInfo/models` HTTP 200, webhook
 отсутствует. Новая live Widgets/human voice приёмка не заявляется.
+
+CI первого HTML checkpoint выявил другое поведение системного шрифта: длинная
+карточка 320px/font20 достигала 628px. Gate не ослаблен. Длинные заголовки получили
+компактную шапку, текст и действия — локальную пагинацию. Добавлена проверка
+200px/font20 и доступности последней части текста через реальный runtime gesture.
+После исправления шрифтов полный локальный `make harness` повторно PASS: все
+compatibility/E02/product layouts, включая 200px/font20, feedback/pagination и
+browser bridge. Go backend с прошлого зелёного `make test` не менялся.

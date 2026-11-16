@@ -19,7 +19,7 @@ for(const theme of ['light','dark','custom']){
  assert.deepEqual(r.diags,[]);assert.ok(r.height<=600);
 }
 // Legal long Russian strings and a larger client font must keep actions reachable.
-for(const [width,font] of [[200,15],[320,20],[390,20]]){
+for(const [width,font] of [[200,15],[200,20],[320,20],[390,20]]){
  const long={title:'Дом близких людей, в котором всем спокойно и хорошо',text:'Часовой пояс: America/Argentina/Buenos_Aires\nУчастников: 12\nДела по дому — общий вклад в уют.',buttons:[{label:'Сегодня',action:'a'.repeat(32)},{label:'Добавить задание',action:'b'.repeat(32)},{label:'Мои баллы',action:'c'.repeat(32)},{label:'Подарки',action:'d'.repeat(32)},{label:'Настройки',action:'e'.repeat(32)},{label:'Мои дома',action:'f'.repeat(32)}]};
  const r=await runWidget(html,{width,layout:true,text:{fontSize:font},data:{chatData:JSON.stringify(long),publicData:null}});
  assert.deepEqual(r.diags,[]);assert.ok(r.height<=600,`long Russian ${width}px font ${font}: ${r.height}`);

@@ -23,3 +23,10 @@ const next=narrow.boxes.find((b:any)=>b.text.startsWith('Ещё действия
 const r=await runWidget(html,{width:200,layout:true,data:paged,context,gestures:[{kind:'tap',x:next.x+30,y:next.y+20}],onRequest(){throw Error('pagination must stay local')},probes:["document.getElementById('buttons').textContent"]});
 assert.deepEqual(r.diags,[]);assert.equal(r.requests.length,0);assert.ok(r.probes[0].includes('Настройки'));
 console.log('PASS narrow card: all actions reachable with local pagination');
+const longState=JSON.parse(paged.chatData);longState.text='Описание '.repeat(8)+'Конец описания';
+const longData={chatData:JSON.stringify(longState),publicData:null};
+const textLayout=await measureButtons(runWidget,html,{width:200,data:longData});
+const more=textLayout.boxes.find((b:any)=>b.text.startsWith('Далее'));assert.ok(more,'text pagination missing');
+const textResult=await runWidget(html,{width:200,layout:true,data:longData,context,gestures:[{kind:'tap',x:more.x+30,y:more.y+20}],probes:["document.getElementById('text').textContent"]});
+assert.deepEqual(textResult.diags,[]);assert.equal(textResult.requests.length,0);assert.ok(textResult.probes[0].includes('Конец описания'));
+console.log('PASS long text: full content remains reachable without a host request');

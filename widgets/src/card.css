@@ -13,3 +13,6 @@ button:active{opacity:.8}
 button:disabled{color:var(--tg-theme-hint-color);background:var(--tg-theme-secondary-bg-color)}
 #feedback{font-size:.8em;color:var(--tg-theme-hint-color);margin:__GAP__ 0 0;line-height:1.25}
 @media(max-width:239px){#buttons{grid-template-columns:1fr}.panel{padding:__GAP__}}
+
+.compact .brand{display:none}
+.compact h3{font-size:1.1em}
