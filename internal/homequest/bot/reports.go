@@ -161,7 +161,7 @@ func (b *Bot) reportAction(uid, msg int64, a Action) (bool, error) {
 		}
 		return true, b.say(uid, "Напомню через 30 минут. Срок задания не изменён.")
 	case "notifications":
-		return true, b.card(uid, msg, "Напоминания", "По умолчанию: за час, в срок и один мягкий повтор через 2 часа. Тихие часы 22–08.", a.CircleID, "rest", "Настроить", "home", "Дом")
+		return true, b.notifications(uid, msg, a.CircleID)
 	case "rest":
 		if e := b.Family.SetStep(uid, "rest", ""); e != nil {
 			return true, e

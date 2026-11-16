@@ -68,6 +68,10 @@ func (b *Bot) PlanReminders(offsets []int) error {
 		child.DB = tx
 		child.Family = &family.Service{DB: tx}
 		for _, instance := range instances {
+			policy, selected, e := child.reminderPlan(instance.CircleID, offsets)
+			if e != nil {
+				return e
+			}
 			var definition ch.Chore
 			if e := tx.First(&definition, "id = ? AND is_active = ?", instance.ChoreID, true).Error; e != nil {
 				continue
@@ -77,7 +81,7 @@ func (b *Bot) PlanReminders(offsets []int) error {
 			}
 			definition.NextDueDate = instance.DueAt
 			definition.NotificationMetadataV2 = &ch.NotificationMetadata{}
-			for _, offset := range offsets {
+			for _, offset := range selected {
 				if offset < -10080 || offset > 10080 {
 					return errors.New("reminder offset out of range")
 				}
@@ -98,8 +102,14 @@ func (b *Bot) PlanReminders(offsets []int) error {
 				user := &c.UserCircleDetail{UserCircle: c.UserCircle{UserID: recipient.UserID, CircleID: instance.CircleID}, NotificationType: n.NotificationPlatformTelegram, TargetID: strconv.FormatInt(recipient.TelegramID, 10)}
 				planned := planner.PlanTemplatesAt(&definition, user, nil, nil, b.Now())
 				for _, notification := range planned {
+					if policy.Version > 0 && !notification.ScheduledFor.After(policy.ChangedAt) {
+						continue
+					}
 					key := fmt.Sprintf("rem:%d:%d:%d:%d", instance.ID, instance.Version, recipient.UserID, notification.ScheduledFor.Unix())
-					row := Delivery{Method: "sendMessage", Viewer: recipient.TelegramID, CircleID: instance.CircleID, InstanceID: instance.ID, Version: instance.Version, EventKey: &key, Notice: true, Next: notification.ScheduledFor, ScheduledFor: notification.ScheduledFor, EventType: fmt.Sprint(notification.RawEvent["type"])}
+					if policy.Version > 0 {
+						key += fmt.Sprintf(":p%d", policy.Version)
+					}
+					row := Delivery{PolicyVersion: policy.Version, Method: "sendMessage", Viewer: recipient.TelegramID, CircleID: instance.CircleID, InstanceID: instance.ID, Version: instance.Version, EventKey: &key, Notice: true, Next: notification.ScheduledFor, ScheduledFor: notification.ScheduledFor, EventType: fmt.Sprint(notification.RawEvent["type"])}
 					r := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&row)
 					if r.Error != nil {
 						return r.Error
@@ -140,6 +150,13 @@ func (b *Bot) Snooze(uid int64, id uint, d time.Duration) error {
 		if _, e := (&family.Service{DB: tx}).Authorize(uid, row.CircleID); e != nil {
 			return e
 		}
+		policy, _, e := (&Bot{DB: tx}).reminderPlan(row.CircleID, nil)
+		if e != nil {
+			return e
+		}
+		if policy.Version != row.PolicyVersion {
+			return family.ErrDenied
+		}
 		var instance task.Instance
 		if tx.First(&instance, "id = ? AND version = ? AND closed = ? AND pending = ?", row.InstanceID, row.Version, false, false).Error != nil {
 			return family.ErrDenied
@@ -173,6 +190,13 @@ func (b *Bot) noticeReady(row Delivery) (bool, error) {
 	}
 
 	if row.InstanceID != 0 {
+		policy, _, e := b.reminderPlan(row.CircleID, nil)
+		if e != nil {
+			return false, e
+		}
+		if policy.Version != row.PolicyVersion {
+			return false, b.DB.Model(&row).Update("sent", true).Error
+		}
 		var instance task.Instance
 		if b.DB.First(&instance, "id = ? AND circle_id = ? AND version = ? AND closed = ? AND pending = ?", row.InstanceID, row.CircleID, row.Version, false, false).Error != nil {
 			return false, b.DB.Model(&row).Update("sent", true).Error

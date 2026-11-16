@@ -80,10 +80,14 @@ http://127.0.0.1:4173. Это loopback-стенд с временной SQLite �
 make migrate GO=/workspace/toolchains/go/bin/go`. Она завершается после миграций,
 не обращается в Telegram и не запускает workers. Повтор безопасен.
 
-Проверено 2026-11-16 07:12 UTC: запущен код e41b7b6; health: database=ready,
-telegram=polling, scheduler=ready, ui=buttons. LLM/STT configured; live-проверки
-отдельно в TEST_MATRIX. Процесс Cloud session 93316; это не systemd service.
-HTML preview session 70428, loopback 4173, HTTP 200.
+Проверено 2026-11-16 08:54 UTC: запущен feature-код 73d18af; health:
+database=ready, telegram=polling, scheduler=ready, ui=buttons. LLM/STT configured;
+это не live voice smoke. Процесс Cloud session 93135; это не systemd service.
+Перед рестартом старый consumer остановлен и создан приватный SQLite snapshot
+`/workspace/homequest-private/runtime/before-wishlist-reminders-20261116.db` (0600).
+Миграции применились при запуске к существующей БД. getMe/webhook/models HTTP 200,
+webhook отсутствует. HTML preview запускается командой выше, отдельный постоянный
+preview-процесс этим checkpoint не поднимался.
 
 ## Развёртывание рядом с LiteLLM — подготовлено, не включено
 

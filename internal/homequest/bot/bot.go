@@ -78,6 +78,7 @@ type Receipt struct {
 func (Receipt) TableName() string { return "hq_update_receipts" }
 
 type Delivery struct {
+	PolicyVersion  int
 	AutoRefresh    bool
 	Screen         string
 	WidgetFallback bool
@@ -102,6 +103,7 @@ type Delivery struct {
 func (Delivery) TableName() string { return "hq_deliveries" }
 
 type Action struct {
+	WishID     int
 	InstanceID int
 	Version    int
 	Token      string `gorm:"primaryKey"`
@@ -162,7 +164,7 @@ func New(db *gorm.DB, html, username string) (*Bot, error) {
 	if _, e = billing.New(db, ""); e != nil {
 		return nil, e
 	}
-	e = db.AutoMigrate(&Receipt{}, &Cursor{}, &Delivery{}, &Action{}, &CardView{}, &u.UserNotificationPreference{}, &RestPreference{}, &AIJob{}, &AIConsent{})
+	e = db.AutoMigrate(&Receipt{}, &Cursor{}, &Delivery{}, &Action{}, &CardView{}, &ReminderPlan{}, &Contact{}, &u.UserNotificationPreference{}, &RestPreference{}, &AIJob{}, &AIConsent{})
 	return &Bot{DB: db, Family: f, HTML: html, Username: username, Now: func() time.Time { return time.Now().UTC() }, ReminderOffsets: []int{-60, 0, 120}}, e
 }
 func (b *Bot) Handle(update Update) error {
@@ -184,6 +186,9 @@ func (b *Bot) Handle(update Update) error {
 			if q.Chat.Type != "private" || q.Chat.ID != q.From.ID {
 				return nil
 			}
+			if e := child.touchContact(q.From.ID); e != nil {
+				return e
+			}
 			if e := child.action(q.From.ID, q.Data, q.MessageID); e != nil {
 				return e
 			}
@@ -193,6 +198,9 @@ func (b *Bot) Handle(update Update) error {
 			if q.Message.Chat.Type != "private" || q.Message.Chat.ID != q.From.ID {
 				return nil
 			}
+			if e := child.touchContact(q.From.ID); e != nil {
+				return e
+			}
 			if e := child.action(q.From.ID, q.Data, 0); e != nil {
 				return e
 			}
@@ -201,6 +209,9 @@ func (b *Bot) Handle(update Update) error {
 		if m := update.Message; m != nil {
 			if m.Chat.Type != "private" || m.Chat.ID != m.From.ID {
 				return nil
+			}
+			if e := child.touchContact(m.From.ID); e != nil {
+				return e
 			}
 			if e := child.Family.Start(m.From.ID, m.From.Name); e != nil {
 				return e
@@ -275,6 +286,17 @@ func (b *Bot) button(uid int64, circle int, kind, label string) (Button, error) 
 	parts := strings.Split(kind, ":")
 	if len(parts) > 1 {
 		switch parts[0] {
+		case "wish_edit", "wish_archive", "wish_archive_confirm", "wish_claim", "wish_purchase", "wish_release":
+			id, e := strconv.Atoi(parts[1])
+			if e != nil {
+				return Button{}, e
+			}
+			var item wishlist.Item
+			if e = b.DB.First(&item, "id=? AND circle_id=? AND archived=?", id, circle, false).Error; e != nil {
+				return Button{}, e
+			}
+			a.WishID = id
+			a.Version = item.Version
 		case "reviewer", "reviewers", "done", "photo_submit", "options", "rules", "configure", "schedule", "task_manage", "pause", "resume", "cancel_task", "cancel_confirm", "edit_task", "due", "assign", "assignee":
 			id, e := strconv.Atoi(parts[1])
 			if e != nil {
@@ -340,6 +362,15 @@ func (b *Bot) home(uid, msg int64) error {
 func (b *Bot) message(uid int64, text string) error {
 	if len(text) > 4096 {
 		return b.say(uid, "Сообщение слишком длинное")
+	}
+	if text == "/back" || text == "/cancel" {
+		if d, e := b.loadWishDraft(uid); e == nil {
+			op := "back"
+			if text == "/cancel" {
+				op = "cancel"
+			}
+			return b.wishFlow(uid, 0, []string{"wish_flow", d.Nonce, strconv.Itoa(d.Revision), op})
+		}
 	}
 	if text == "/back" {
 		state, e := b.Family.Step(uid)
@@ -409,11 +440,22 @@ func (b *Bot) message(uid int64, text string) error {
 	}
 	switch id.Step {
 	case "wish_new":
-		return b.wishMessage(uid, text)
+		h, e := b.Family.Current(uid)
+		if e != nil {
+			return e
+		}
+		if e = b.startWish(uid, 0, h.ID, 0); e != nil {
+			return e
+		}
+		return b.wishDraftMessage(uid, text)
+	case "wish_name", "wish_link", "wish_note", "wish_price", "wish_review":
+		return b.wishDraftMessage(uid, text)
 	case "reward_new", "reward_edit":
 		return b.rewardMessage(uid, id.Step, id.Draft, text)
 	case "task_edit", "task_due":
 		return b.editTaskMessage(uid, id.Step, id.Draft, text)
+	case "reminder_plan":
+		return b.reminderPlanMessage(uid, id.Draft, text)
 	case "rest":
 		return b.restMessage(uid, text)
 	case "schedule":
@@ -486,10 +528,20 @@ func (b *Bot) action(uid int64, token string, msg int64) error {
 			return b.say(uid, "Правила задания изменились. Откройте свежую карточку через /start.")
 		}
 	}
+	switch strings.Split(a.Kind, ":")[0] {
+	case "wish_edit", "wish_archive", "wish_archive_confirm", "wish_claim", "wish_purchase", "wish_release":
+		var item wishlist.Item
+		if a.WishID == 0 || b.DB.First(&item, "id=? AND circle_id=? AND version=? AND archived=?", a.WishID, a.CircleID, a.Version, false).Error != nil {
+			return b.say(uid, "Желание изменилось или убрано. Откройте свежий список подарков.")
+		}
+	}
 	if a.Used {
 		return b.home(uid, msg)
 	}
 	if e := b.DB.Model(&a).Update("used", true).Error; e != nil {
+		return e
+	}
+	if handled, e := b.reminderAction(uid, msg, a); handled {
 		return e
 	}
 	if strings.HasPrefix(a.Kind, "homes:") {

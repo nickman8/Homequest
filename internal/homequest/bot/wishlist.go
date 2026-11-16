@@ -31,13 +31,17 @@ func (b *Bot) wishes(uid, msg int64, circle, page int) error {
 	if e != nil {
 		return e
 	}
-	text := short(r.Note, 60) + "\n" + short(r.Price, 30)
+	text := short(r.Note, 40) + "\n" + short(r.Price, 20)
 	opts := []string{}
 	if r.UserID == u.ID {
 		text = "Моё желание\n" + text
+		opts = append(opts, fmt.Sprintf("wish_edit:%d", r.ID), "Править", fmt.Sprintf("wish_archive:%d", r.ID), "Убрать")
 	} else if r.Claim == nil {
 		opts = append(opts, fmt.Sprintf("wish_claim:%d", r.ID), "Забронировать тайно")
 	} else if r.Claim.Mine {
+		if r.Claim.Changed {
+			text = "Желание обновлено — проверьте детали.\n" + text
+		}
 		if r.Claim.Purchased {
 			text = "Вы купили этот подарок\n" + text
 		} else {
@@ -50,26 +54,6 @@ func (b *Bot) wishes(uid, msg int64, circle, page int) error {
 	opts = append(opts, fmt.Sprintf("wish_info:%d", r.ID), "Подробнее", fmt.Sprintf("wishes:%d", (page+1)%len(rows)), "Далее", "wish_new", "Добавить", "home", "Дом")
 	return b.card(uid, msg, short(r.Name, 40), text, circle, opts...)
 }
-func (b *Bot) wishMessage(uid int64, text string) error {
-	h, e := b.Family.Current(uid)
-	if e != nil {
-		return e
-	}
-	p := strings.SplitN(text, "|", 4)
-	for len(p) < 4 {
-		p = append(p, "")
-	}
-	for i := range p {
-		p[i] = strings.TrimSpace(p[i])
-	}
-	if _, e = (&wishlist.Service{DB: b.DB}).Create(uid, h.ID, p[0], p[1], p[2], p[3]); e != nil {
-		return b.say(uid, e.Error())
-	}
-	if e = b.Family.SetStep(uid, "", ""); e != nil {
-		return e
-	}
-	return b.wishes(uid, 0, h.ID, 0)
-}
 func (b *Bot) wishAction(uid, msg int64, a Action) (bool, error) {
 	parts := strings.Split(a.Kind, ":")
 	id := 0
@@ -81,10 +65,21 @@ func (b *Bot) wishAction(uid, msg int64, a Action) (bool, error) {
 	case "wishes":
 		return true, b.wishes(uid, msg, a.CircleID, id)
 	case "wish_new":
-		if e := b.Family.SetStep(uid, "wish_new", ""); e != nil {
-			return true, e
+		return true, b.startWish(uid, msg, a.CircleID, 0)
+	case "wish_flow":
+		return true, b.wishFlow(uid, msg, parts)
+	case "wish_edit":
+		return true, b.startWish(uid, msg, a.CircleID, id)
+	case "wish_archive":
+		if _, e := s.Owned(uid, a.CircleID, id); e != nil {
+			return true, b.say(uid, "Это желание нельзя изменить")
 		}
-		return true, b.say(uid, "Введите: название | ссылка | заметка | примерная цена. Достаточно названия; остальные поля необязательны. /cancel — отмена")
+		return true, b.card(uid, msg, "Убрать желание?", "Оно исчезнет из семейного списка.", a.CircleID, fmt.Sprintf("wish_archive_confirm:%d", id), "Да, убрать", "wishes:0", "Назад")
+	case "wish_archive_confirm":
+		if e := s.Archive(uid, a.CircleID, id, a.Version); e != nil {
+			return true, b.say(uid, "Желание изменилось. Откройте список заново.")
+		}
+		return true, b.wishes(uid, msg, a.CircleID, 0)
 	case "wish_claim", "wish_purchase", "wish_release":
 		var e error
 		if parts[0] == "wish_claim" {

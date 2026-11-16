@@ -27,6 +27,12 @@ try{
  for(const theme of ['light','dark']){await page.locator('#theme').selectOption(theme);await frame.getByRole('button',{name:'Выполнено',exact:true}).waitFor();await page.screenshot({path:`docs/screenshots/preview-${theme}.png`,fullPage:true})}
  await click('Выполнено');await frame.getByText('Пока нет доступных заданий.',{exact:false}).waitFor();await click('Дом');await click('Мои баллы');
  await frame.getByText('Баланс: 10',{exact:false}).waitFor();
+ await click('Назад');await click('Подарки');await click('Добавить желание');
+ await send('Книга');await click('Пропустить');await send('Бумажное издание');await click('Пропустить');await click('Сохранить');
+ await click('Править');await send('Книга о доме');for(let i=0;i<3;i++)await click('Оставить');await click('Сохранить');
+ await frame.getByText('Книга о доме',{exact:false}).waitFor();await click('Убрать');await click('Да, убрать');
+ await page.locator('#viewer').selectOption('900001');await send('/start');await click('Настройки');await click('Напоминания');await click('Для всего дома');await click('Только в срок');
+ await frame.getByText('в срок',{exact:false}).first().waitFor();
  assert.deepEqual(errors,[]);
- console.log('PASS browser bridge → handlers → SQLite: family/join/task/completion/balance; light/dark screenshots');
+ console.log('PASS browser bridge → handlers → SQLite: family/join/task/completion/balance/wish create-edit-archive/reminder settings; light/dark screenshots');
 }finally{await browser?.close();server.kill('SIGTERM');await new Promise(r=>server.once('exit',r))}

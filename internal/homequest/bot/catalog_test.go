@@ -55,6 +55,9 @@ func TestCatalogsAndPremiumThroughUpdates(t *testing.T) {
 	click(900001, "wishes:0")
 	click(900001, "wish_new")
 	say(900001, "Книга | https://example.org | Бумажная | 1000")
+	var confirm Action
+	db.Where("viewer=? AND kind LIKE ?", 900001, "wish_flow:%:save").Order("expires DESC").First(&confirm)
+	click(900001, confirm.Kind)
 	click(900002, "wishes:0")
 	click(900002, "wish_claim:1")
 	say(900001, "/start")

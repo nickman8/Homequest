@@ -19,7 +19,8 @@ harness: build widgets
 	WIDGET_SANDBOX=$(WIDGET_SANDBOX) $(WIDGET_SANDBOX)/node_modules/.bin/tsx tests/widget-feedback.mts
 	mkdir -p .tools
 	HQ_WIDGET_CARDS_OUT=$(CURDIR)/.tools/widget-cards.json $(GO) test ./internal/homequest/bot -run TestCatalogs -count=1
-	WIDGET_SANDBOX=$(WIDGET_SANDBOX) HQ_WIDGET_CARDS_OUT=$(CURDIR)/.tools/widget-cards.json $(WIDGET_SANDBOX)/node_modules/.bin/tsx tests/card-layouts.mts
+	HQ_FEATURE_CARDS_OUT=$(CURDIR)/.tools/widget-feature-cards.json $(GO) test ./internal/homequest/bot -run TestFeatureCardBudgets -count=1
+	WIDGET_SANDBOX=$(WIDGET_SANDBOX) HQ_WIDGET_CARDS_OUT=$(CURDIR)/.tools/widget-cards.json HQ_FEATURE_CARDS_OUT=$(CURDIR)/.tools/widget-feature-cards.json $(WIDGET_SANDBOX)/node_modules/.bin/tsx tests/card-layouts.mts
 	WIDGET_SANDBOX=$(WIDGET_SANDBOX) $(WIDGET_SANDBOX)/node_modules/.bin/tsx tests/preview.mts
 dev: build
 	./scripts/dev.sh

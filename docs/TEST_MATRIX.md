@@ -11,15 +11,15 @@ unit/integration/Bot fixtures проходили. Последний запус�
 | E02 | tests/bot-widget-e02.mts; task.TestCompletionRaceSnapshotAndAuthorization; bot.TestOtherMembersTaskCardRefreshesThroughOutbox | Реальный HTML → официальный QuickJS/renderer gesture → Bot.Handle → SQLite → новый state; баланс/вклад/XP; 9 width/theme; race отдельно integration |
 | E03 | bot.TestE03PhotoApprovalThroughUpdates; task.TestPhotoApprovalSnapshotRejectAndUndo; TestConcurrentApproveRejectIsSingleDecision | Bot E2E controlled transport + integration; фото/approval/отказ/снимок/undo/гонка |
 | E04 | chore.TestHomeQuestLateAcceptanceAndDST; task.TestLateApprovalCreatesOnlyFutureInstance; TestTimezoneChangePreservesLocalScheduleAndInvalidatesCards; bot.TestScheduleDialogGrammar; bot.TestE04LateApprovalThroughBotAndWorker | Unit + SQLite + Bot/worker с fake clock: несколько пропущенных недель, DST, timezone, restart, позднее approval и старые callbacks |
-| E05 | bot.TestReminderPlanningRestartSnoozeAndInvalidation; TestQuietHoursAndVacation | SQLite/outbox с fake clock; отдельные quiet/vacation правила. Не настоящий Telegram delivery |
+| E05 | bot.TestReminderPlanningRestartSnoozeAndInvalidation; TestQuietHoursAndVacation; TestFamilyReminderPlanThroughButtonsAndRestart | SQLite/outbox с fake clock; отдельные quiet/vacation правила. Не настоящий Telegram delivery |
 | E06 | reward.TestRedemptionReservationRefundSnapshotAndUndo; bot.TestCatalogsAndPremiumThroughUpdates | Integration race/snapshot/refund/undo/archive + product updates request→approve→deliver→первая награда badge |
-| E07 | wishlist.TestSecretClaimsRaceIsolationAndDeparture; bot.TestCatalogsAndPremiumThroughUpdates | Concurrent claim, неизменный owner DTO, чужая семья, уход + UI flow. API отдельного сайта не существует |
+| E07 | wishlist.TestSecretClaimsRaceIsolationAndDeparture; bot.TestCatalogsAndPremiumThroughUpdates; TestGiftSecrecyAcrossProductPayloads; TestWishWizardEditArchiveAndStaleButtons; wishlist.TestOwnerEditsArchiveAndSecretClaims; TestConcurrentEditUsesOneVersion | Concurrent claim, неизменный owner DTO, чужая семья, уход + UI flow. API отдельного сайта не существует |
 | E08 | assistant.TestSafeCommandValidation; bot.TestE08E09AIUpdatesVoiceDraftAndReplay | STT/LLM fixtures через очередь и product updates; отрицание/чужой ID/replay. Реальная LLM проверена отдельно; human voice не доказан |
 | E09 | тот же TestE08E09; assistant schema test | Черновик не создаёт instance до подтверждения, повтор кнопки без дубля; расписание во family timezone |
 | E10 | billing.TestManualEntitlementAuthorizationModeAndPersistence; bot.TestCatalogsAndPremiumThroughUpdates | Серверный mode/role/scope, expiry/revoke/restart + product buttons. Реальных payment методов нет |
 | E11 | family/service_test.go; task auth/photo tests; wishlist isolation; bot.TestOldTaskActionAfterRuleChangeIsRejected; task.TestDesignatedReviewerAndDeparture; assistant foreign ID | Unit/integration + отдельные bot stale actions; не единый полный adversarial E2E всех сущностей |
-| E12 | bot runtime_test.go; widget.TestTransportRedactsErrors; TestStatusIsStructuredWithoutDescription; assistant schema/fixtures; bot.TestAssistantFailureKeepsManualCompletion | 429/backoff, 409 stop, slow send independent ack, dedup, JSON. STT failure/LLM timeout/invalid JSON проходят очередь и затем ручное выполнение |
-| E13 | task.TestLegacyAttemptMigration; bot.TestDialogueBackAndRestartState; stale action test; tests/card-layouts.mts | Реальная SQLite migration, restart диалогов, старые версии; официальный renderer размеров/тем. Не покрывает все возможные старые БД |
+| E12 | bot runtime_test.go; widget.TestTransportRedactsErrors; TestStatusIsStructuredWithoutDescription; bot.TestDeliveryUnavailableAndPrivateChatRecovery; TestOldDeliveryFailureCannotBlockNewPrivateUpdate; assistant schema/fixtures; bot.TestAssistantFailureKeepsManualCompletion | 429/backoff, 409 stop, slow send independent ack, dedup, JSON. STT failure/LLM timeout/invalid JSON проходят очередь и затем ручное выполнение |
+| E13 | task.TestLegacyAttemptMigration; wishlist.TestLegacyWishlistMigration; bot.TestDialogueBackAndRestartState; stale action test; tests/card-layouts.mts | Реальная SQLite migration, restart диалогов, старые версии; официальный renderer размеров/тем. Не покрывает все возможные старые БД |
 
 Upstream baseline: Donetick v0.1.86 до изменений запускался на пустой SQLite,
 повторный запуск успешен; `go test ./...` проходил. Новые проверки не скрывают
@@ -27,9 +27,9 @@ baseline failures — их не обнаружено.
 
 Официальный harness: pinned SHA в REUSE; spike 9 layouts + E02 9 layouts;
 продуктовые карточки из настоящих handlers проверяются на 200px, state ≤1024,
-height ≤600; 3 обезличенных screenshots. E02 использует контролируемый host/API,
+height ≤600; 5 обезличенных screenshots. E02 использует контролируемый host/API,
 но настоящий QuickJS, validator и renderer. Совместимость не доказывается обычным browser mock. Отдельный tests/preview.mts
-проверяет browser bridge → handlers → SQLite: дом, join, task, completion, balance.
+проверяет browser bridge → handlers → SQLite: дом, join, task, completion, balance, создание/правка/архив желания и семейные интервалы.
 Это разработческий стенд, не проверка Telegram-клиента.
 
 ## Live smoke
@@ -103,3 +103,19 @@ migration и health в этих tests контролируемые. Это не 
 retention, не удаляющая посторонние пути. Всего 9 ops tests. Реальный упакованный
 CGO-disabled homequest-migrate выполнен на пустой SQLite и повторно на той же БД:
 оба запуска PASS. Архив ~136 MB, только явный whitelist; секретов/БД в нём нет.
+
+Новые feature gates: TestFeatureCardBudgets создаёт реальные карточки через handlers
+с максимальными кириллическими полями и URL; make harness передаёт их в официальный
+renderer. TestGiftSecrecyAcrossProductPayloads использует A/B/C/D, конкурентные
+Bot.Handle, неизменность разрешённого автору state/подробностей и фактический вход
+контролируемого LLM adapter. Сырые данные дарителя не передаются этому adapter.
+TestFamilyReminderPlanThroughButtonsAndRestart проверяет invalidation старых jobs
+и snooze, сохранение сроков, смену политики владельцем и новые сообщения worker.
+403 tests проверяют отсутствие backlog, восстановление свежим private update и
+гонку запоздалого отказа с новым /start. Это controlled transport, не live Telegram.
+
+Feature checkpoint 2026-11-16: `make test harness` exit 0; Go tests всех пакетов,
+9 spike + 9 linked E02 layouts, 32 product cards, 5 official-renderer screenshots,
+feedback/pagination и расширенный browser path — PASS. `go test -race
+./internal/homequest/bot ./internal/homequest/wishlist` — PASS. Реальные
+Telegram Widgets/напоминания/человеческий голос этим запуском не проверялись.

@@ -7,7 +7,9 @@ const launch=chromium.launch.bind(chromium);let screenshot='';
 chromium.launch=async(...args:any[])=>{const browser=await launch(...args),close=browser.close.bind(browser);browser.close=async()=>{if(screenshot){for(const context of browser.contexts())for(const page of context.pages())await page.screenshot({path:screenshot});screenshot=''}return close()};return browser};
 const cards=JSON.parse(fs.readFileSync(input,'utf8'));const html=fs.readFileSync('widgets/family.html','utf8');
 fs.mkdirSync('docs/screenshots',{recursive:true});let count=0;
-for(const [title,card] of Object.entries(cards)){
+const extra=process.env.HQ_FEATURE_CARDS_OUT?JSON.parse(fs.readFileSync(process.env.HQ_FEATURE_CARDS_OUT,'utf8')):{};
+const all={...cards,...Object.fromEntries(Object.entries(extra).map(([k,v])=>['feature:'+k,v]))};
+for(const [title,card] of Object.entries(all)){
  assert.ok(Buffer.byteLength(JSON.stringify(card))<=1024,title+' state budget');
  // Each product screen at the narrowest profile width; themes share the same template.
  const r=await runWidget(html,{width:200,layout:true,data:{chatData:JSON.stringify(card),publicData:null}});
@@ -24,4 +26,8 @@ for(const [width,font] of [[200,15],[200,20],[320,20],[390,20]]){
  const r=await runWidget(html,{width,layout:true,text:{fontSize:font},data:{chatData:JSON.stringify(long),publicData:null}});
  assert.deepEqual(r.diags,[]);assert.ok(r.height<=600,`long Russian ${width}px font ${font}: ${r.height}`);
 }
-console.log(`PASS ${count} product cards at 200px; 3 official-renderer screenshots`);
+for(const title of ['Проверьте желание','Напоминания дома']){
+ assert.ok(extra[title],title);screenshot=`docs/screenshots/${title==='Проверьте желание'?'wish-review':'reminder-plan'}.png`;
+ const r=await runWidget(html,{width:320,layout:true,data:{chatData:JSON.stringify(extra[title]),publicData:null}});assert.deepEqual(r.diags,[]);assert.ok(r.height<=600);
+}
+console.log(`PASS ${count} product cards at 200px; 5 official-renderer screenshots`);

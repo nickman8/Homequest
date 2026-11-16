@@ -65,10 +65,23 @@ func (b *Bot) Dispatch(ctx context.Context, api API) error {
 				continue
 			}
 		}
+		contact, e := b.contact(row.Viewer)
+		if e != nil {
+			return e
+		}
+		if contact.Blocked {
+			if e = b.DB.Model(&row).Update("sent", true).Error; e != nil {
+				return e
+			}
+			continue
+		}
 		var reply json.RawMessage
 		e = api.Call(ctx, row.Method, payload, &reply)
 		if e == nil {
 			if e = b.DB.Transaction(func(tx *gorm.DB) error {
+				if err := tx.Model(&Contact{}).Where("viewer=? AND generation=?", row.Viewer, contact.Generation).Updates(map[string]any{"last_delivered_at": b.Now(), "blocked": false}).Error; err != nil {
+					return err
+				}
 				if err := b.rememberView(tx, row, payload, reply); err != nil {
 					return err
 				}
@@ -79,6 +92,13 @@ func (b *Bot) Dispatch(ctx context.Context, api API) error {
 			continue
 		}
 
+		var denied *widget.APIError
+		if errors.As(e, &denied) && denied.Code == 403 && row.Viewer > 0 {
+			if e = b.contactUnavailable(row, contact); e != nil {
+				return e
+			}
+			continue
+		}
 		var rejection *widget.APIError
 		if errors.As(e, &rejection) && rejection.Reason == "widget_not_allowed" && (row.Method == "sendWidget" || row.Method == "editMessageWidgetData") {
 			var card Card
