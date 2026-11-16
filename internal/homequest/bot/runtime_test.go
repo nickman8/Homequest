@@ -118,3 +118,50 @@ func TestSlowDeliveryDoesNotBlockWidgetAcknowledgement(t *testing.T) {
 	cancel()
 	<-done
 }
+
+type widgetDeniedAPI struct {
+	calls   []string
+	message map[string]any
+}
+
+func (f *widgetDeniedAPI) Call(_ context.Context, method string, payload any, _ any) error {
+	f.calls = append(f.calls, method)
+	if method == "sendWidget" {
+		return &widget.APIError{Code: 400, Reason: "widget_not_allowed"}
+	}
+	if method == "sendMessage" {
+		f.message = payload.(map[string]any)
+	}
+	return nil
+}
+func TestWidgetDeniedDeliversUsefulButtons(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(t.TempDir()+"/fallback.db"), &gorm.Config{})
+	b, e := New(db, "<h3>Дом</h3>", "test")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = b.Handle(Update{ID: 1, Message: &Message{From: Person{ID: 900001, Name: "A"}, Chat: Chat{ID: 900001, Type: "private"}, Text: "/start"}}); e != nil {
+		t.Fatal(e)
+	}
+	api := &widgetDeniedAPI{}
+	if e = b.Dispatch(context.Background(), api); e != nil {
+		t.Fatal(e)
+	}
+	if e = b.Dispatch(context.Background(), api); e != nil {
+		t.Fatal(e)
+	}
+	if e = b.Dispatch(context.Background(), api); e != nil {
+		t.Fatal(e)
+	}
+	if len(api.calls) != 2 || api.calls[1] != "sendMessage" {
+		t.Fatal("missing bounded fallback", api.calls)
+	}
+	if api.message["text"] == nil || api.message["reply_markup"] == nil {
+		t.Fatal("empty fallback")
+	}
+	var d Delivery
+	db.First(&d)
+	if !d.Sent || !d.WidgetFallback {
+		t.Fatal("delivery not audited")
+	}
+}

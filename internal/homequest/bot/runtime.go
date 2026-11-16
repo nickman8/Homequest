@@ -59,6 +59,28 @@ func (b *Bot) Dispatch(ctx context.Context, api API) error {
 			}
 			continue
 		}
+
+		var rejection *widget.APIError
+		if errors.As(e, &rejection) && rejection.Reason == "widget_not_allowed" && (row.Method == "sendWidget" || row.Method == "editMessageWidgetData") {
+			var card Card
+			raw, ok := payload["chat_data"].(string)
+			if !ok || json.Unmarshal([]byte(raw), &card) != nil {
+				return errors.New("invalid fallback projection")
+			}
+			buttons := [][]map[string]string{}
+			for _, button := range card.Buttons {
+				buttons = append(buttons, []map[string]string{{"text": button.Label, "callback_data": button.Action}})
+			}
+			fallback := map[string]any{"chat_id": payload["chat_id"], "text": card.Title + "\n\n" + card.Text, "reply_markup": map[string]any{"inline_keyboard": buttons}}
+			encoded, err := json.Marshal(fallback)
+			if err != nil {
+				return err
+			}
+			if err = b.DB.Model(&row).Updates(map[string]any{"method": "sendMessage", "payload": string(encoded), "widget_fallback": true, "attempts": 0, "next": b.Now()}).Error; err != nil {
+				return err
+			}
+			continue
+		}
 		delay := time.Duration(1<<uint(row.Attempts)) * time.Second
 		var ae *widget.APIError
 		if errors.As(e, &ae) && ae.RetryAfter > 0 {

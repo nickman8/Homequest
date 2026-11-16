@@ -59,3 +59,8 @@ python3 scripts/backup.py /absolute/private/data/donetick.db /absolute/private/b
 что старый polling остановлен. Исходящий HTTPS; публичный endpoint не нужен.
 Codex Cloud не гарантирует жизнь процесса после завершения работы; nohup этого
 не меняет. Здесь не используются keepalive-задачи для продления среды.
+
+При точном Telegram INPUT_MEDIA_WIDGET_NOT_ALLOWED outbox сохраняет fallback
+в sendMessage с теми же actions; health показывает widget_fallbacks. Это отдельный
+серверный блокер Widgets, не успех их live-проверки. Не устранять его бесконечными
+повторами. Статические шаблоны/официальный harness сохранены для доступных клиентов.

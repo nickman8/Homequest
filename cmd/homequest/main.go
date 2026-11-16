@@ -149,7 +149,9 @@ func run() error {
 			_, _ = w.Write([]byte(`{"database":"unavailable"}`))
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"database": "ready", "telegram": state.Load(), "llm": llmStatus, "stt": sttStatus, "scheduler": "polling_worker"})
+		var fallbackCount int64
+		db.Model(&bot.Delivery{}).Where("widget_fallback = ?", true).Count(&fallbackCount)
+		_ = json.NewEncoder(w).Encode(map[string]any{"database": "ready", "telegram": state.Load(), "llm": llmStatus, "stt": sttStatus, "scheduler": "polling_worker", "widget_fallbacks": fallbackCount})
 	})
 	addr := os.Getenv("HOMEQUEST_HEALTH_ADDR")
 	if addr == "" {

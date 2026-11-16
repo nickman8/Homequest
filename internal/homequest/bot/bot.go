@@ -77,22 +77,23 @@ type Receipt struct {
 func (Receipt) TableName() string { return "hq_update_receipts" }
 
 type Delivery struct {
-	AttemptID    int
-	EventKey     *string `gorm:"uniqueIndex"`
-	InstanceID   int
-	Version      int
-	Notice       bool
-	EventType    string
-	ScheduledFor time.Time
-	CircleID     int
-	Viewer       int64
-	ID           uint `gorm:"primaryKey"`
-	Method       string
-	Payload      string
-	Attempts     int
-	Sent         bool
-	Next         time.Time
-	CreatedAt    time.Time
+	WidgetFallback bool
+	AttemptID      int
+	EventKey       *string `gorm:"uniqueIndex"`
+	InstanceID     int
+	Version        int
+	Notice         bool
+	EventType      string
+	ScheduledFor   time.Time
+	CircleID       int
+	Viewer         int64
+	ID             uint `gorm:"primaryKey"`
+	Method         string
+	Payload        string
+	Attempts       int
+	Sent           bool
+	Next           time.Time
+	CreatedAt      time.Time
 }
 
 func (Delivery) TableName() string { return "hq_deliveries" }

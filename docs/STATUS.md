@@ -33,8 +33,10 @@ E02 (9 layouts) + compatibility spike (9), 17 продуктовых layouts и 
 старые права, DST/позднее approval, restart/retry, schema validation, миграции.
 Полные E01–E13 на одном сквозном уровне пока не доказаны; подробности TEST_MATRIX.
 
-Telegram getMe: @Home_questbot, webhook отсутствует. Реальный клиент/нажатие
-ожидает пользовательского /start. По разрешению владельца gateway переключён
+Telegram getMe: @Home_questbot, webhook отсутствует. Получен первый реальный update в личном чате.
+Telegram sendWidget отвечает INPUT_MEDIA_WIDGET_NOT_ALLOWED; добавлен fallback
+на обычные сообщения с теми же серверными действиями; первая fallback-доставка
+подтверждена настоящим Telegram API. Live Widgets пока заблокированы. По разрешению владельца gateway переключён
 на https://vyceai.com/v1: /models и completion HTTP 200, точный ID
 `deepseek-4.1-flash-1017`. JSON Schema accepted; реальный Go client прошёл 4
 семантических проверки и отдельный bot→real LLM→SQLite→одно начисление сценарий.
@@ -58,7 +60,7 @@ DATA_DIR=/workspace/homequest-private/runtime; секреты вне Git с пр
 
 Ветка codex/homequest-mvp опубликована через Git Data API; API credentials
 работают, HTTPS Git — нет. Новый PAT не создан и не нужен для публикации.
-Force:false, tree equality и secret scan. Отдельной base branch для draft PR нет.
+Force:false, tree equality и secret scan. Draft PR #1 создан в codex/homequest-baseline (review-only bootstrap); main/master не менялись.
 
 Продолжать с текущего checkout, без повторного выбора базы: make test/harness,
 затем реальный /start и голосовой smoke. Opt-in live проверки провайдера:

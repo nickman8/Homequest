@@ -14,7 +14,7 @@ unit/integration/Bot fixtures проходили. Последний запус�
 | E05 | bot.TestReminderPlanningRestartSnoozeAndInvalidation; TestQuietHoursAndVacation | SQLite/outbox с fake clock; отдельные quiet/vacation правила. Не настоящий Telegram delivery |
 | E06 | reward.TestRedemptionReservationRefundSnapshotAndUndo; bot.TestCatalogsAndPremiumThroughUpdates | Integration race/snapshot/refund/undo + product updates request→approve→deliver |
 | E07 | wishlist.TestSecretClaimsRaceIsolationAndDeparture; bot.TestCatalogsAndPremiumThroughUpdates | Concurrent claim, неизменный owner DTO, чужая семья, уход + UI flow. API отдельного сайта не существует |
-| E08 | assistant.TestSafeCommandValidation; bot.TestE08E09AIUpdatesVoiceDraftAndReplay | STT/LLM fixtures через очередь и product updates; отрицание/чужой ID/replay. Live speech/LLM НЕ доказаны |
+| E08 | assistant.TestSafeCommandValidation; bot.TestE08E09AIUpdatesVoiceDraftAndReplay | STT/LLM fixtures через очередь и product updates; отрицание/чужой ID/replay. Реальная LLM проверена отдельно; human voice не доказан |
 | E09 | тот же TestE08E09; assistant schema test | Черновик не создаёт instance до подтверждения, повтор кнопки без дубля; расписание во family timezone |
 | E10 | billing.TestManualEntitlementAuthorizationModeAndPersistence; bot.TestCatalogsAndPremiumThroughUpdates | Серверный mode/role/scope, expiry/revoke/restart + product buttons. Реальных payment методов нет |
 | E11 | family/service_test.go; task auth/photo tests; wishlist isolation; bot.TestOldTaskActionAfterRuleChangeIsRejected; task.TestDesignatedReviewerAndDeparture; assistant foreign ID | Unit/integration + отдельные bot stale actions; не единый полный adversarial E2E всех сущностей |
@@ -33,8 +33,9 @@ height ≤600; 3 обезличенных screenshots. E02 использует 
 ## Live smoke
 
 - getMe/getWebhookInfo: HTTP 200, @Home_questbot, webhook отсутствует.
-- Polling и DB health проверены. Настоящий Telegram-клиент, карточка и callback
-  ожидают пользовательского `/start`; найденные чаты не использовались для рассылки.
+- Получен реальный update в личном чате. sendWidget: HTTP 400
+  INPUT_MEDIA_WIDGET_NOT_ALLOWED, несмотря на private chat. Fallback переводит ту же
+  доставку в sendMessage с полезным текстом и inline buttons. Это не live Widgets PASS.
 - Новый разрешённый VyceAI: /models и completion HTTP 200; точный ID
   deepseek-4.1-flash-1017. TestLiveVyceAISemantics: 4/4 PASS через реальный Go client.
   TestLiveGatewayCompletionThroughBot: PASS, реальная LLM + product handlers + SQLite,
@@ -49,3 +50,8 @@ Opt-in команда: HOMEQUEST_LIVE_AI=1 HOMEQUEST_SECRETS_FILE=/absolute/priv
  go test ./internal/homequest/assistant ./internal/homequest/bot -run TestLive -count=1 -v.
 В обычном CI live tests SKIP. TestConsentIsBoundToProvider и gateway configuration
 тесты проходят без внешних запросов. Реальный человеческий voice остаётся открытым.
+
+Новый live-дефект: INPUT_MEDIA_WIDGET_NOT_ALLOWED воспроизведён на настоящем API.
+TestWidgetDenialExposesOnlyKnownReason и TestWidgetDeniedDeliversUsefulButtons PASS:
+типизированная причина без raw ошибки/токена, один fallback, сохранение кнопок,
+без повторного доменного эффекта. Не считать fallback доказательством Widgets.

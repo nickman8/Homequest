@@ -50,3 +50,20 @@ func TestStatusIsStructuredWithoutDescription(t *testing.T) {
 		t.Fatal("leak")
 	}
 }
+
+type deniedWidgetTransport struct{}
+
+func (deniedWidgetTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: 400, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"description":"Bad Request: INPUT_MEDIA_WIDGET_NOT_ALLOWED secret-token"}`))}, nil
+}
+func TestWidgetDenialExposesOnlyKnownReason(t *testing.T) {
+	c := NewClient("secret-token", &http.Client{Transport: deniedWidgetTransport{}})
+	e := c.Call(context.Background(), "sendWidget", nil, nil)
+	var api *APIError
+	if !errors.As(e, &api) || api.Reason != "widget_not_allowed" {
+		t.Fatal("missing typed denial")
+	}
+	if strings.Contains(e.Error(), "secret-token") {
+		t.Fatal("raw error leaked")
+	}
+}

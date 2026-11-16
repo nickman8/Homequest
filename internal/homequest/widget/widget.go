@@ -65,12 +65,17 @@ func (c *Client) Call(ctx context.Context, method string, payload any, result an
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		var body struct {
-			Parameters struct {
+			Description string `json:"description"`
+			Parameters  struct {
 				RetryAfter int `json:"retry_after"`
 			} `json:"parameters"`
 		}
 		_ = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body)
-		return &APIError{Code: resp.StatusCode, RetryAfter: body.Parameters.RetryAfter}
+		reason := ""
+		if resp.StatusCode == 400 && strings.Contains(body.Description, "INPUT_MEDIA_WIDGET_NOT_ALLOWED") {
+			reason = "widget_not_allowed"
+		}
+		return &APIError{Code: resp.StatusCode, RetryAfter: body.Parameters.RetryAfter, Reason: reason}
 	}
 	var envelope struct {
 		OK     bool            `json:"ok"`
@@ -86,6 +91,7 @@ func (c *Client) Call(ctx context.Context, method string, payload any, result an
 }
 
 type APIError struct {
+	Reason     string
 	Code       int
 	RetryAfter int
 }
