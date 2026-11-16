@@ -4,6 +4,7 @@ import (
 	ch "donetick.com/core/internal/chore/model"
 	c "donetick.com/core/internal/circle/model"
 	"donetick.com/core/internal/homequest/family"
+	l "donetick.com/core/internal/label/model"
 	p "donetick.com/core/internal/points"
 	"errors"
 	"gorm.io/gorm"
@@ -24,19 +25,21 @@ type Instance struct {
 func (Instance) TableName() string { return "hq_task_instances" }
 
 type Attempt struct {
-	ReviewerID   *int
-	ReviewedBy   *int
-	ReviewedAt   *time.Time
-	ID           int  `gorm:"primaryKey"`
-	InstanceID   int  `gorm:"index"`
-	HistoryID    int  `gorm:"uniqueIndex"`
-	LedgerID     *int `gorm:"uniqueIndex"`
-	AcceptedAt   time.Time
-	UserID       int
-	Status       string
-	PhotoID      string
-	Approval     bool
-	UndoLedgerID *int
+	Rotation         bool
+	AssignedSnapshot *int
+	ReviewerID       *int
+	ReviewedBy       *int
+	ReviewedAt       *time.Time
+	ID               int  `gorm:"primaryKey"`
+	InstanceID       int  `gorm:"index"`
+	HistoryID        int  `gorm:"uniqueIndex"`
+	LedgerID         *int `gorm:"uniqueIndex"`
+	AcceptedAt       time.Time
+	UserID           int
+	Status           string
+	PhotoID          string
+	Approval         bool
+	UndoLedgerID     *int
 }
 
 func (Attempt) TableName() string { return "hq_attempts" }
@@ -84,7 +87,7 @@ func New(db *gorm.DB) (*Service, error) {
 			}
 		}
 	}
-	e := db.AutoMigrate(&ch.Chore{}, &ch.ChoreHistory{}, &p.PointsHistory{}, &Instance{}, &Attempt{}, &Rule{})
+	e := db.AutoMigrate(&ch.Chore{}, &ch.ChoreHistory{}, &p.PointsHistory{}, &Instance{}, &Attempt{}, &Rule{}, &l.Label{}, &Room{}, &PresetImport{}, &ch.ChoreAssignees{}, &Handoff{})
 	if e != nil {
 		return nil, e
 	}
@@ -127,6 +130,9 @@ func (s *Service) Create(tg int64, circle int, name string, points int, assigned
 }
 func (s *Service) List(tg int64, circle int) ([]Item, error) {
 	if _, e := (&family.Service{DB: s.DB}).Authorize(tg, circle); e != nil {
+		return nil, e
+	}
+	if e := s.ReconcileRotation(circle); e != nil {
 		return nil, e
 	}
 	var rows []Item
@@ -230,7 +236,7 @@ func (s *Service) Manage(tg int64, circle, id int, action string, target int) er
 				}
 				assigned = &target
 			}
-			e = tx.Model(&definition).Update("assigned_to", assigned).Error
+			e = tx.Model(&definition).Updates(map[string]any{"assigned_to": assigned, "assign_strategy": ch.AssignmentStrategyKeepLastAssigned}).Error
 		default:
 			return errors.New("Неизвестное изменение задания")
 		}

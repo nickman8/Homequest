@@ -22,6 +22,11 @@ harness: build widgets
 	HQ_FEATURE_CARDS_OUT=$(CURDIR)/.tools/widget-feature-cards.json $(GO) test ./internal/homequest/bot -run TestFeatureCardBudgets -count=1
 	WIDGET_SANDBOX=$(WIDGET_SANDBOX) HQ_WIDGET_CARDS_OUT=$(CURDIR)/.tools/widget-cards.json HQ_FEATURE_CARDS_OUT=$(CURDIR)/.tools/widget-feature-cards.json $(WIDGET_SANDBOX)/node_modules/.bin/tsx tests/card-layouts.mts
 	WIDGET_SANDBOX=$(WIDGET_SANDBOX) $(WIDGET_SANDBOX)/node_modules/.bin/tsx tests/preview.mts
+	WIDGET_SANDBOX=$(WIDGET_SANDBOX) $(WIDGET_SANDBOX)/node_modules/.bin/tsx tests/household-e2e.mts
+	WIDGET_SANDBOX=$(WIDGET_SANDBOX) $(WIDGET_SANDBOX)/node_modules/.bin/tsx tests/plans-e2e.mts
+	WIDGET_SANDBOX=$(WIDGET_SANDBOX) $(WIDGET_SANDBOX)/node_modules/.bin/tsx tests/shopping-e2e.mts
+	WIDGET_SANDBOX=$(WIDGET_SANDBOX) $(WIDGET_SANDBOX)/node_modules/.bin/tsx tests/assistant-e2e.mts
+	WIDGET_SANDBOX=$(WIDGET_SANDBOX) $(WIDGET_SANDBOX)/node_modules/.bin/tsx tests/e2e-runtime.mts
 dev: build
 	./scripts/dev.sh
 migrate:

@@ -200,7 +200,7 @@ func (b *Bot) reportAction(uid, msg int64, a Action) (bool, error) {
 		}
 		return true, b.say(uid, text)
 	case "options":
-		return true, b.card(uid, msg, "Параметры задания", "Правила может менять автор или владелец. Фото и подтверждение — независимые требования.", a.CircleID, fmt.Sprintf("rules:%d", id), "Правила", fmt.Sprintf("photo_submit:%d", id), "Выполнить с фото", fmt.Sprintf("schedule:%d", id), "Повторение", fmt.Sprintf("task_manage:%d", id), "Изменить", fmt.Sprintf("task_details:%d", id), "Описание", "tasks", "Назад")
+		return true, b.card(uid, msg, "Параметры задания", "Правила может менять автор или владелец. Фото и подтверждение — независимые требования.", a.CircleID, fmt.Sprintf("rules:%d", id), "Правила", fmt.Sprintf("photo_submit:%d", id), "Выполнить с фото", fmt.Sprintf("schedule:%d", id), "Повторение", fmt.Sprintf("task_manage:%d", id), "Изменить", fmt.Sprintf("task_details:%d", id), "Описание", fmt.Sprintf("organize:%d", id), "Комната и очередь", "tasks", "Назад")
 	case "rules":
 		return true, b.card(uid, msg, "Правила выполнения", "Выберите требования. Для подтверждения нужен ещё один участник.", a.CircleID, fmt.Sprintf("configure:%d:none", id), "Без требований", fmt.Sprintf("configure:%d:photo", id), "Только фото", fmt.Sprintf("configure:%d:approval", id), "Подтверждение", fmt.Sprintf("configure:%d:both", id), "Фото и подтверждение")
 	case "configure":

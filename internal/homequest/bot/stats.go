@@ -9,7 +9,7 @@ import (
 
 func (b *Bot) points(uid, msg int64, circle int) error {
 	b = b.screenFor("points")
-	s := &stats.Service{DB: b.DB, WeeklyGoal: 100}
+	s := &stats.Service{DB: b.DB}
 	v, e := s.Summary(uid, circle, b.Now())
 	if e != nil {
 		return e
@@ -18,7 +18,7 @@ func (b *Bot) points(uid, msg int64, circle int) error {
 }
 func (b *Bot) ranking(uid, msg int64, circle, page int) error {
 	b = b.screenFor(fmt.Sprintf("ranking:%d", page))
-	s := &stats.Service{DB: b.DB, WeeklyGoal: 100}
+	s := &stats.Service{DB: b.DB}
 	rows, e := s.Ranking(uid, circle, b.Now())
 	if e != nil {
 		return e
@@ -47,7 +47,7 @@ func (b *Bot) ranking(uid, msg int64, circle, page int) error {
 }
 func (b *Bot) badges(uid, msg int64, circle int) error {
 	b = b.screenFor("badges")
-	names, e := (&stats.Service{DB: b.DB, WeeklyGoal: 100}).Badges(uid, circle, b.Now())
+	names, e := (&stats.Service{DB: b.DB}).Badges(uid, circle, b.Now())
 	if e != nil {
 		return e
 	}
@@ -59,7 +59,7 @@ func (b *Bot) badges(uid, msg int64, circle int) error {
 }
 func (b *Bot) house(uid, msg int64, circle int) error {
 	b = b.screenFor("house")
-	v, e := (&stats.Service{DB: b.DB, WeeklyGoal: 100}).Summary(uid, circle, b.Now())
+	v, e := (&stats.Service{DB: b.DB}).Summary(uid, circle, b.Now())
 	if e != nil {
 		return e
 	}
@@ -118,7 +118,7 @@ func (b *Bot) awardBadges(uid int64) error {
 		return e
 	}
 	for _, tg := range ids {
-		if _, e = (&stats.Service{DB: b.DB, WeeklyGoal: 100}).Badges(tg, h.ID, b.Now()); e != nil {
+		if _, e = (&stats.Service{DB: b.DB}).Badges(tg, h.ID, b.Now()); e != nil {
 			return e
 		}
 	}

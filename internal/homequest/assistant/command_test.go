@@ -26,3 +26,15 @@ func TestSafeCommandValidation(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestShoppingDraftValidation(t *testing.T) {
+	raw := `{"action":"shopping_draft","shopping":[{"name":"Молоко","quantity":"2 л","note":""}],"ids":[],"draft":null}`
+	if _, e := Decode(raw, "добавь молоко в список покупок", nil); e != nil {
+		t.Fatal(e)
+	}
+	for _, raw := range []string{`{"action":"shopping_draft","shopping":[{"name":"","quantity":"","note":""}]}`, `{"action":"complete","ids":[1],"shopping":[{"name":"Молоко"}]}`, `{"action":"shopping_draft","shopping":[{"name":"Молоко","family_id":99}]}`} {
+		if _, e := Decode(raw, "добавь молоко", []Candidate{{ID: 1}}); e == nil {
+			t.Fatal("unsafe shopping command accepted", raw)
+		}
+	}
+}

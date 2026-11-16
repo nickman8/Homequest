@@ -11,8 +11,7 @@ import (
 )
 
 type Service struct {
-	DB         *gorm.DB
-	WeeklyGoal int
+	DB *gorm.DB
 }
 type Summary struct {
 	Balance   int
@@ -38,7 +37,7 @@ type Badge struct {
 
 func (Badge) TableName() string { return "hq_badges" }
 func New(db *gorm.DB) (*Service, error) {
-	return &Service{DB: db, WeeklyGoal: 100}, db.AutoMigrate(&Badge{}, &r.RewardRedemption{})
+	return &Service{DB: db}, db.AutoMigrate(&Badge{}, &r.RewardRedemption{}, &GoalSetting{}, &WeekGoal{}, &GoalRevision{})
 }
 func weekStart(now time.Time, zone string) (time.Time, error) {
 	loc, e := time.LoadLocation(zone)
@@ -164,10 +163,14 @@ func (s *Service) Badges(tg int64, circle int, now time.Time) ([]string, error) 
 	if e = s.DB.Model(&r.RewardRedemption{}).Where("circle_id=? AND user_id=? AND status=?", circle, user.ID, r.RedemptionStatusDelivered).Count(&delivered).Error; e != nil {
 		return nil, e
 	}
+	weekly, e := s.Weekly(tg, circle, now, 0)
+	if e != nil {
+		return nil, e
+	}
 	conditions := []struct {
 		Code string
 		Met  bool
-	}{{"first", len(attempts) >= 1}, {"ten", len(attempts) >= 10}, {"fifty", len(attempts) >= 50}, {"photo", photo}, {"days", len(days) >= 3}, {"together", week >= s.WeeklyGoal && len(home.Members) >= 2}, {"reward", delivered > 0}}
+	}{{"first", len(attempts) >= 1}, {"ten", len(attempts) >= 10}, {"fifty", len(attempts) >= 50}, {"photo", photo}, {"days", len(days) >= 3}, {"together", week >= weekly.Goal && len(home.Members) >= 2}, {"reward", delivered > 0}}
 	var names []string
 	for _, condition := range conditions {
 		if !condition.Met {

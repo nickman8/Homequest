@@ -7,6 +7,7 @@ import (
 	"donetick.com/core/internal/homequest/billing"
 	"donetick.com/core/internal/homequest/family"
 	"donetick.com/core/internal/homequest/reward"
+	"donetick.com/core/internal/homequest/shopping"
 	"donetick.com/core/internal/homequest/stats"
 	"donetick.com/core/internal/homequest/task"
 	"donetick.com/core/internal/homequest/widget"
@@ -78,6 +79,7 @@ type Receipt struct {
 func (Receipt) TableName() string { return "hq_update_receipts" }
 
 type Delivery struct {
+	HandoffID      int
 	PolicyVersion  int
 	AutoRefresh    bool
 	Screen         string
@@ -159,6 +161,9 @@ func New(db *gorm.DB, html, username string) (*Bot, error) {
 		return nil, e
 	}
 	if _, e = wishlist.New(db); e != nil {
+		return nil, e
+	}
+	if _, e = shopping.New(db); e != nil {
 		return nil, e
 	}
 	if _, e = billing.New(db, ""); e != nil {
@@ -297,7 +302,7 @@ func (b *Bot) button(uid int64, circle int, kind, label string) (Button, error) 
 			}
 			a.WishID = id
 			a.Version = item.Version
-		case "reviewer", "reviewers", "done", "photo_submit", "options", "rules", "configure", "schedule", "task_manage", "pause", "resume", "cancel_task", "cancel_confirm", "edit_task", "due", "assign", "assignee":
+		case "organize", "rotation", "pick_room", "set_room", "offer_to", "offer_handoff", "reviewer", "reviewers", "done", "photo_submit", "options", "rules", "configure", "schedule", "task_manage", "pause", "resume", "cancel_task", "cancel_confirm", "edit_task", "due", "assign", "assignee":
 			id, e := strconv.Atoi(parts[1])
 			if e != nil {
 				return Button{}, e
@@ -350,7 +355,7 @@ func (b *Bot) home(uid, msg int64) error {
 		}
 		return b.card(uid, msg, "Добро пожаловать домой", "Создайте дом или откройте приглашение близкого человека.", 0, "create", "Создать дом")
 	}
-	opts := []string{"tasks", "Сегодня", "new_task", "Добавить задание", "points", "Мои баллы", "wishes:0", "Подарки", "settings", "Настройки"}
+	opts := []string{"tasks", "Сегодня", "new_task", "Добавить задание", "points", "Мои баллы", "wishes:0", "Подарки", "settings", "Настройки", "household", "Домашние планы"}
 	if homes, err := b.Family.Homes(uid); err != nil {
 		return err
 	} else if len(homes) > 1 {
@@ -439,6 +444,38 @@ func (b *Bot) message(uid int64, text string) error {
 		return e
 	}
 	switch id.Step {
+	case "shopping_draft":
+		return b.shoppingMessage(uid, text)
+	case "weekly_goal":
+		circle, _ := strconv.Atoi(id.Draft)
+		goal, err := strconv.Atoi(strings.TrimSpace(text))
+		if err != nil {
+			return b.say(uid, "Введите целое число")
+		}
+		if err = (&stats.Service{DB: b.DB}).SetWeeklyGoal(uid, circle, goal, b.Now()); err != nil {
+			return b.say(uid, err.Error())
+		}
+		b.Family.SetStep(uid, "", "")
+		return b.weekly(uid, 0, circle, 0)
+	case "organization":
+		return b.organizationMessage(uid, text)
+	case "room_new", "room_rename":
+		var circle, room int
+		fmt.Sscanf(id.Draft, "%d:%d", &circle, &room)
+		var err error
+		s := &task.Service{DB: b.DB}
+		if id.Step == "room_new" {
+			_, err = s.CreateRoom(uid, circle, text)
+		} else {
+			err = s.RenameRoom(uid, circle, room, text)
+		}
+		if err != nil {
+			return b.say(uid, err.Error())
+		}
+		if err = b.Family.SetStep(uid, "", ""); err != nil {
+			return err
+		}
+		return b.rooms(uid, 0, circle, 0)
 	case "wish_new":
 		h, e := b.Family.Current(uid)
 		if e != nil {
@@ -539,6 +576,15 @@ func (b *Bot) action(uid int64, token string, msg int64) error {
 		return b.home(uid, msg)
 	}
 	if e := b.DB.Model(&a).Update("used", true).Error; e != nil {
+		return e
+	}
+	if handled, e := b.shoppingAction(uid, msg, a); handled {
+		return e
+	}
+	if handled, e := b.weeklyAction(uid, msg, a); handled {
+		return e
+	}
+	if handled, e := b.organizationAction(uid, msg, a); handled {
 		return e
 	}
 	if handled, e := b.reminderAction(uid, msg, a); handled {

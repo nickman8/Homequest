@@ -255,6 +255,12 @@ func (b *Bot) ProcessAI(ctx context.Context) error {
 		if e = tx.Model(&job).Updates(map[string]any{"text": job.Text, "command": job.Command, "candidates": job.Candidates, "voice_id": ""}).Error; e != nil {
 			return e
 		}
+		if command.Action == "shopping_draft" {
+			if e = tx.Model(&job).Updates(map[string]any{"state": "done", "text": "", "command": "", "candidates": ""}).Error; e != nil {
+				return e
+			}
+			return child.startShopping(job.Viewer, 0, job.CircleID, 0, 0, command.Shopping)
+		}
 		if command.Action == "complete" {
 			return child.applyAI(&job, false)
 		}

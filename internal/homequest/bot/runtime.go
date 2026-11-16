@@ -166,6 +166,12 @@ func (b *Bot) Run(ctx context.Context, api API, status func(string)) error {
 				cancel()
 				return
 			}
+			if e := b.PlanWeekly(); e != nil {
+				status("scheduler_error")
+				workerDone <- e
+				cancel()
+				return
+			}
 			if e := b.PlanReviews(); e != nil {
 				status("scheduler_error")
 				workerDone <- e

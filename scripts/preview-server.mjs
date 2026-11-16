@@ -7,7 +7,7 @@ import {execFile} from 'node:child_process';
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'homequest-preview-'));
 const port=Number(process.env.HOMEQUEST_PREVIEW_PORT||4173);
 const origin=`http://127.0.0.1:${port}`;
-let chain=Promise.resolve();
+let chain=Promise.resolve(),clock=process.env.HOMEQUEST_PREVIEW_NOW||'',aiCommand=null,speech='';
 const files={'/':['preview/index.html','text/html; charset=utf-8'],'/app.js':['preview/app.js','text/javascript'],'/style.css':['preview/style.css','text/css'],'/widget.html':['widgets/family.html','text/html; charset=utf-8']};
 const server=http.createServer(async(req,res)=>{
  res.setHeader('Cache-Control','no-store');
@@ -21,10 +21,12 @@ const server=http.createServer(async(req,res)=>{
   let raw='';for await(const chunk of req){raw+=chunk;if(Buffer.byteLength(raw)>8192)throw Error('size')}
   const input=JSON.parse(raw);
   if(![900001,900002,900003,900004].includes(input.viewer)||typeof(input.text??'')!=='string'||typeof(input.action??'')!=='string')throw Error('input');
+  if(input.ai_command)aiCommand=input.ai_command;if(input.speech)speech=input.speech;
+  if(input.now){if(typeof input.now!=='string'||!Number.isFinite(Date.parse(input.now)))throw Error('clock');clock=input.now}
   // A bounded subprocess; no production environment variables are inherited.
   const invoke=()=>new Promise((resolve,reject)=>{
    const child=execFile('./bin/bot-probe',[path.join(dir,'demo.db')],{maxBuffer:1<<20,timeout:15000,env:{PATH:process.env.PATH}},(err,stdout)=>err?reject(Error('handler')):resolve(stdout));
-   child.stdin.end(JSON.stringify({viewer:input.viewer,text:input.text||'',action:input.action||''}));
+   child.stdin.end(JSON.stringify({viewer:input.viewer,text:input.text||'',action:input.action||'',photo:input.photo||'',now:clock,tick:input.tick===true,ai_command:aiCommand,speech,voice:input.voice===true,process_ai:input.process_ai===true,update_id:input.update_id||0,billing_mode:input.billing_mode||''}));
   });
   const pending=chain.then(invoke);chain=pending.catch(()=>{});
   const result=await pending;

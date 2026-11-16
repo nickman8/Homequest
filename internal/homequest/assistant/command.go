@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"context"
+	"donetick.com/core/internal/homequest/shopping"
 	"donetick.com/core/internal/homequest/task"
 	"encoding/json"
 	"errors"
@@ -21,9 +22,10 @@ type Draft struct {
 	Schedule task.Schedule `json:"schedule"`
 }
 type Command struct {
-	Action string `json:"action"`
-	IDs    []int  `json:"ids,omitempty"`
-	Draft  *Draft `json:"draft,omitempty"`
+	Shopping []shopping.Input `json:"shopping,omitempty"`
+	Action   string           `json:"action"`
+	IDs      []int            `json:"ids,omitempty"`
+	Draft    *Draft           `json:"draft,omitempty"`
 }
 type LLM interface {
 	Parse(context.Context, string, []Candidate, string) (Command, error)
@@ -36,7 +38,20 @@ var unsafeText = regexp.MustCompile(`(?i)(^|[^а-яё])(не|нет|завтра
 
 func (c *Command) Validate(text string, candidates []Candidate) error {
 	denied := errors.New("Нужно уточнение; действие не выполнено")
+	if c.Action != "shopping_draft" && len(c.Shopping) > 0 {
+		return denied
+	}
 	switch c.Action {
+	case "shopping_draft":
+		if len(c.IDs) > 0 || c.Draft != nil || len(c.Shopping) < 1 || len(c.Shopping) > 10 {
+			return denied
+		}
+		for _, v := range c.Shopping {
+			if shopping.Validate(v) != nil {
+				return denied
+			}
+		}
+		return nil
 	case "none", "clarify":
 		if len(c.IDs) > 0 || c.Draft != nil {
 			return denied

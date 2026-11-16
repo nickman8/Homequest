@@ -2,10 +2,14 @@
 package main
 
 import (
+	"context"
+	"donetick.com/core/internal/homequest/assistant"
 	"donetick.com/core/internal/homequest/bot"
+	"donetick.com/core/internal/homequest/shopping"
 	"donetick.com/core/internal/homequest/stats"
 	"donetick.com/core/internal/homequest/task"
 	"encoding/json"
+	"fmt"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -30,14 +34,42 @@ func main() {
 		os.Exit(1)
 	}
 	var input struct {
-		Viewer   int64  `json:"viewer"`
-		Text     string `json:"text"`
-		Action   string `json:"action"`
-		UpdateID int64  `json:"update_id"`
+		Viewer      int64              `json:"viewer"`
+		Text        string             `json:"text"`
+		Action      string             `json:"action"`
+		UpdateID    int64              `json:"update_id"`
+		Photo       string             `json:"photo"`
+		Now         string             `json:"now"`
+		BillingMode string             `json:"billing_mode"`
+		Tick        bool               `json:"tick"`
+		AICommand   *assistant.Command `json:"ai_command"`
+		Speech      string             `json:"speech"`
+		Voice       bool               `json:"voice"`
+		ProcessAI   bool               `json:"process_ai"`
 	}
 	if json.NewDecoder(os.Stdin).Decode(&input) != nil {
 		os.Exit(2)
 	}
+	if input.AICommand != nil {
+		fixture := &fixtureAI{Command: *input.AICommand, Speech: input.Speech}
+		app.LLM = fixture
+		app.STT = fixture
+		app.VoiceSource = fixture
+		app.AIProvider = "fixture"
+	}
+	app.BillingMode = "manual_test"
+	if input.BillingMode != "" {
+		app.BillingMode = input.BillingMode
+	}
+	if input.Now != "" {
+		at, err := time.Parse(time.RFC3339, input.Now)
+		if err != nil {
+			os.Exit(2)
+		}
+		app.Now = func() time.Time { return at }
+	}
+	var before uint
+	db.Model(&bot.Delivery{}).Select("COALESCE(MAX(id),0)").Scan(&before)
 	var last int64
 	db.Model(&bot.Receipt{}).Select("COALESCE(MAX(id),0)").Scan(&last)
 	if input.UpdateID == 0 {
@@ -47,9 +79,40 @@ func main() {
 	if input.Action != "" {
 		update.Query = &bot.Query{ID: "fixture_query", From: bot.Person{ID: input.Viewer}, Chat: bot.Chat{ID: input.Viewer, Type: "private"}, MessageID: 1, Data: input.Action}
 	} else {
-		update.Message = &bot.Message{From: bot.Person{ID: input.Viewer, Name: "Участник"}, Chat: bot.Chat{ID: input.Viewer, Type: "private"}, Text: input.Text}
+		update.Message = &bot.Message{From: bot.Person{ID: input.Viewer, Name: fmt.Sprintf("Участник %d", input.Viewer-900000)}, Chat: bot.Chat{ID: input.Viewer, Type: "private"}, Text: input.Text}
 	}
-	if e = app.Handle(update); e != nil {
+	if input.Photo != "" {
+		var m bot.Message
+		raw, _ := json.Marshal(map[string]any{"from": map[string]any{"id": input.Viewer, "first_name": "Фото"}, "chat": map[string]any{"id": input.Viewer, "type": "private"}, "photo": []map[string]string{{"file_id": input.Photo}}})
+		json.Unmarshal(raw, &m)
+		update.Message = &m
+	}
+	if input.Voice {
+		update.Message = &bot.Message{From: bot.Person{ID: input.Viewer, Name: "Участник"}, Chat: bot.Chat{ID: input.Viewer, Type: "private"}, Voice: &bot.Voice{FileID: "fixture_audio", Duration: 3}}
+	}
+	transport := &captureAPI{}
+	if input.Tick {
+		e = app.PlanWeekly()
+		if e == nil {
+			e = app.PlanReminders(app.ReminderOffsets)
+		}
+		if e == nil {
+			e = app.PlanReviews()
+		}
+		for n := 0; e == nil && n < 100; n++ {
+			before := len(transport.Sent)
+			e = app.Dispatch(context.Background(), transport)
+			if len(transport.Sent) == before {
+				break
+			}
+		}
+	} else {
+		e = app.Handle(update)
+	}
+	if e == nil && input.ProcessAI {
+		e = app.ProcessAI(context.Background())
+	}
+	if e != nil {
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]string{"error": "handler_failed"})
 		os.Exit(1)
 	}
@@ -64,10 +127,42 @@ func main() {
 	balance := 0
 	var summary stats.Summary
 	var familyID int
+	needed, boughtCount := 0, 0
+	var openTasks any
 	if h, e := app.Family.Current(input.Viewer); e == nil {
 		familyID = h.ID
+		openTasks, _ = (&task.Service{DB: db}).List(input.Viewer, h.ID)
+		purchases, _ := (&shopping.Service{DB: db}).List(input.Viewer, h.ID, false)
+		needed = len(purchases)
+		bought, _ := (&shopping.Service{DB: db}).List(input.Viewer, h.ID, true)
+		boughtCount = len(bought)
 		balance, _ = (&task.Service{DB: db}).Balance(input.Viewer, h.ID)
-		summary, _ = (&stats.Service{DB: db}).Summary(input.Viewer, h.ID, time.Now().UTC())
+		summary, _ = (&stats.Service{DB: db}).Summary(input.Viewer, h.ID, app.Now())
 	}
-	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"state": state, "payload": payload, "balance": balance, "week": summary.Week, "xp": summary.XP, "family_id": familyID, "update_id": input.UpdateID, "at": time.Now().UTC()})
+	var deliveries []bot.Delivery
+	db.Where("viewer=? AND id>?", input.Viewer, before).Order("id").Find(&deliveries)
+	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"tasks_open": openTasks, "shopping_needed": needed, "shopping_bought": boughtCount, "sent": transport.Sent, "deliveries": deliveries, "state": state, "payload": payload, "balance": balance, "week": summary.Week, "xp": summary.XP, "family_id": familyID, "update_id": input.UpdateID, "at": app.Now()})
+}
+
+type captureAPI struct{ Sent []map[string]any }
+
+func (a *captureAPI) Call(_ context.Context, method string, payload any, out any) error {
+	a.Sent = append(a.Sent, map[string]any{"method": method, "payload": payload})
+	if r, ok := out.(*json.RawMessage); ok {
+		*r = json.RawMessage(fmt.Sprintf(`{"message_id":%d}`, len(a.Sent)))
+	}
+	return nil
+}
+
+type fixtureAI struct {
+	Command assistant.Command
+	Speech  string
+}
+
+func (f *fixtureAI) Parse(context.Context, string, []assistant.Candidate, string) (assistant.Command, error) {
+	return f.Command, nil
+}
+func (f *fixtureAI) Transcribe(context.Context, []byte) (string, error) { return f.Speech, nil }
+func (f *fixtureAI) Voice(context.Context, string) ([]byte, error) {
+	return []byte("controlled fixture audio"), nil
 }

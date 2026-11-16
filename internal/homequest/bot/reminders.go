@@ -4,6 +4,7 @@ import (
 	ch "donetick.com/core/internal/chore/model"
 	c "donetick.com/core/internal/circle/model"
 	"donetick.com/core/internal/homequest/family"
+	"donetick.com/core/internal/homequest/stats"
 	"donetick.com/core/internal/homequest/task"
 	n "donetick.com/core/internal/notifier/model"
 	planner "donetick.com/core/internal/notifier/service"
@@ -60,6 +61,15 @@ func (b *Bot) PlanReminders(offsets []int) error {
 		return errors.New("at most five reminder offsets")
 	}
 	return b.DB.Transaction(func(tx *gorm.DB) error {
+		var circles []int
+		if e := tx.Model(&task.Instance{}).Where("closed=?", false).Distinct().Pluck("circle_id", &circles).Error; e != nil {
+			return e
+		}
+		for _, circle := range circles {
+			if e := (&task.Service{DB: tx}).ReconcileRotation(circle); e != nil {
+				return e
+			}
+		}
 		var instances []task.Instance
 		if e := tx.Where("closed = ? AND pending = ? AND due_at IS NOT NULL", false, false).Find(&instances).Error; e != nil {
 			return e
@@ -181,6 +191,21 @@ func (b *Bot) Snooze(uid int64, id uint, d time.Duration) error {
 	})
 }
 func (b *Bot) noticeReady(row Delivery) (bool, error) {
+	if row.HandoffID != 0 {
+		offers, e := (&task.Service{DB: b.DB}).Handoffs(row.Viewer, row.CircleID, b.Now())
+		if e != nil {
+			return false, b.DB.Model(&row).Update("sent", true).Error
+		}
+		found := false
+		for _, h := range offers {
+			if h.ID == row.HandoffID {
+				found = true
+			}
+		}
+		if !found {
+			return false, b.DB.Model(&row).Update("sent", true).Error
+		}
+	}
 	if row.AttemptID != 0 {
 		var a task.Attempt
 		user, e := b.Family.Authorize(row.Viewer, row.CircleID)
@@ -221,7 +246,16 @@ func (b *Bot) noticeReady(row Delivery) (bool, error) {
 	if e != nil && !errors.Is(e, gorm.ErrRecordNotFound) {
 		return false, e
 	}
-	if !pref.Enabled(u.NotificationEventType(row.EventType)) {
+	enabled := pref.Enabled(u.NotificationEventType(row.EventType))
+	if row.EventType == "hq_weekly" {
+		enabled = pref.Profile != u.NotificationProfileQuiet
+		var setting stats.GoalSetting
+		if e := b.DB.First(&setting, "circle_id=?", row.CircleID).Error; e != nil && e != gorm.ErrRecordNotFound {
+			return false, e
+		}
+		enabled = enabled && !setting.DigestOff
+	}
+	if !enabled {
 		return false, b.DB.Model(&row).Update("sent", true).Error
 	}
 	rest := RestPreference{UserID: user.ID, QuietStart: 22, QuietEnd: 8}
@@ -229,7 +263,7 @@ func (b *Bot) noticeReady(row Delivery) (bool, error) {
 	if e != nil && !errors.Is(e, gorm.ErrRecordNotFound) {
 		return false, e
 	}
-	home, e := b.Family.Current(row.Viewer)
+	home, e := b.Family.View(row.Viewer, row.CircleID)
 	if e != nil {
 		return false, e
 	}

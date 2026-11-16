@@ -23,6 +23,8 @@ func TestLiveVyceAISemantics(t *testing.T) {
 	n := &NickLLM{BaseURL: cfg["NICKLLM_BASE_URL"], Key: cfg["NICKLLM_API_KEY"], Model: cfg["NICKLLM_MODEL"]}
 	candidates := []Candidate{{ID: 1, Title: "Вынести мусор", Version: 1}, {ID: 2, Title: "Помыть посуду", Version: 1}}
 	for _, tc := range []struct{ name, text, want string }{
+		{"shopping", "Добавь молоко 2 литра и корм в список покупок", "shopping_draft"},
+		{"shopping_negation", "Не добавляй молоко в список покупок", "no_effect"},
 		{"completion", "Я выкинул мусор", "complete"},
 		{"negation", "Я не выкинул мусор", "no_effect"},
 		{"future", "Я завтра выкину мусор", "no_effect"},
@@ -46,6 +48,9 @@ func TestLiveVyceAISemantics(t *testing.T) {
 			}
 			if tc.want == "complete" && (len(c.IDs) != 1 || c.IDs[0] != 1) {
 				t.Fatal("wrong task")
+			}
+			if tc.want == "shopping_draft" && len(c.Shopping) != 2 {
+				t.Fatal("incorrect shopping draft")
 			}
 			if tc.want == "draft" {
 				d := c.Draft

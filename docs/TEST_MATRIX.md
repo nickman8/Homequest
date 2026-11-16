@@ -39,7 +39,7 @@ height ≤600; 5 обезличенных screenshots. E02 использует 
   INPUT_MEDIA_WIDGET_NOT_ALLOWED, несмотря на private chat. Fallback переводит ту же
   доставку в sendMessage с полезным текстом и inline buttons. Это не live Widgets PASS.
 - Новый разрешённый VyceAI: /models и completion HTTP 200; точный ID
-  deepseek-4.1-flash-1017. TestLiveVyceAISemantics: 8/8 PASS через реальный Go client.
+  deepseek-4.1-flash-1017. TestLiveVyceAISemantics: 10/10 PASS через реальный Go client.
   TestLiveGatewayCompletionThroughBot: PASS, реальная LLM + product handlers + SQLite,
   Telegram transport controlled. JSON Schema strict принят; локальная валидация остаётся.
 - faster-whisper small CPU int8 реально загружен и запущен. Синтетическая русская
@@ -53,69 +53,56 @@ Opt-in команда: HOMEQUEST_LIVE_AI=1 HOMEQUEST_SECRETS_FILE=/absolute/priv
 В обычном CI live tests SKIP. TestConsentIsBoundToProvider и gateway configuration
 тесты проходят без внешних запросов. Реальный человеческий voice остаётся открытым.
 
-Известное внешнее ограничение: INPUT_MEDIA_WIDGET_NOT_ALLOWED воспроизведён на настоящем API.
-TestWidgetDenialExposesOnlyKnownReason и TestWidgetDeniedDeliversUsefulButtons PASS:
-типизированная причина без raw ошибки/токена, один fallback, сохранение кнопок,
-без повторного доменного эффекта. Не считать fallback доказательством Widgets.
+## Подробные HTML E2E
 
-Аудит 16 ноября: make test PASS (cache), make harness PASS повторно:
-9 spike + 9 E02 + 17 product cards, 3 screenshots. Повторный getMe/webhook/models
-HTTP 200. Новых Telegram Widgets или human-voice PASS нет.
-Причина запрета подтверждена ответом levlam от 13 ноября в
-[официальном issue #947](https://github.com/tdlib/telegram-bot-api/issues/947):
-обычным ботам запрещены Widgets даже в private chats. Руководство по доступности
-не отражает это ограничение. Полный список незакрытых критериев — STATUS.
+Каждый сценарий идёт через реальные кнопки HTML, controlled Telegram updates,
+Bot.Handle, миграции и временную SQLite. Ни один успешный доменный результат не
+подставляется прямой записью из теста. Отдельный процесс bot-probe на каждом
+update дополнительно проверяет сохранение состояния после restart. Для worker
+используются управляемые часы, для AI — явно обозначенные adapters/fixtures.
 
-Дополнительные проверки этого изменения: TestSwitchUIWithoutChangingActions,
-TestGatewayRejectionHasSafeStatus, TestMultipleHomesThroughButtons,
-TestOtherMembersTaskCardRefreshesThroughOutbox (включая stale retry после навигации),
-TestAssistantFailureKeepsManualCompletion — PASS. Race: bot/family/task/reward/wishlist
-PASS. Миграция отдельной командой два раза на одной пустой SQLite — PASS.
-Тесты сначала воспроизводили отсутствие переключения домов, обновлений карточек,
-награды-достижения и зависание ACK; после реализации проходят.
+| Файл в tests/ | Покрытые пути и необычные случаи |
+|---|---|
+| preview.mts | E01/E02, создание/edit/archive желания, семейные интервалы, темы |
+| household-e2e.mts | E01/E03/E06/E07/E10/E11: invalid timezone, фото→reject→новое фото→approval, self/foreign/replay, snapshot награды после изменения цены, insufficient balance, refund once, запрет refund после выдачи, гонка тайной брони и неизменный owner payload, XSS, pause/resume/cancel, исключение/передача владельца/отозванное приглашение/выход |
+| plans-e2e.mts | Набор: invalid points/edit/skip/duplicate; комнаты: canonical duplicate/rename/delete с сохранением задач; очередь и добровольная передача/отказ/replay/чужой токен/старое выполнение; недельная граница, цель, mute и реальный outbox worker без повторной рассылки |
+| shopping-e2e.mts | Batch/draft/edit/claim race/buy/reopen/archive, чужая семья, старая отменённая кнопка, двойное сохранение, max Cyrillic/XSS/invalid length; fixture voice→consent→реальная очередь→черновик→HTML confirm/cancel без ранних записей |
+| assistant-e2e.mts | E08/E09 + undo: fixture voice, согласие, завершение, компенсация/replay, ошибочная команда модели на отрицание/будущее/неуверенность/прошлое, чужой ID, task draft cancel/confirm/replay, optional photo, истёкшее undo, рейтинг/достижения/история |
+| e2e-runtime.mts | Все различные state из четырёх подробных путей → официальный QuickJS/validator/renderer, 200px, 1024-byte state/600px height; новые главные экраны также 320/390 dark/custom |
+| bot-widget-e02.mts | Отдельно связанный официальный runtime gesture → сформированный request → handlers/SQLite → state → новый renderer; 9 width/theme комбинаций |
+| widget-harness.mts, widget-feedback.mts, card-layouts.mts | Spike и общий HTML, ACK/timeout/rate-limit/error, локальная пагинация, длинный текст, 200px/font20, 32 граничные карточки |
 
-widget-feedback.mts проверяет ACK без state, rate limit, timeout, failure и
-переход на вторую страницу действий без серверного request. card-layouts.mts
-дополнен длинным русским названием и font 20 на 320/390px. Эти проверки выявили
-переполнение 600px; карточка теперь разбивает длинный список действий на страницы.
+Это покрытие всех продуктовых HTML-шаблонов и основных разделов, а не всех
+комбинаторных сочетаний данных. Network 429/409, миграции и календарный DST
+дополнительно проверяются на Bot/integration уровне; живой Telegram не симулируется
+под видом успешного клиентского теста.
 
-Итог 2026-11-16 07:12 UTC: `make test harness GO=/workspace/toolchains/go/bin/go
-WIDGET_SANDBOX=/workspace/widget-sandbox` — exit 0. Все перечисленные новые
-проверки и browser bridge PASS. `getMe/getWebhookInfo/models` HTTP 200, webhook
-отсутствует. Новая live Widgets/human voice приёмка не заявляется.
+## Доменные регрессии расширения
 
-CI первого HTML checkpoint выявил другое поведение системного шрифта: длинная
-карточка 320px/font20 достигала 628px. Gate не ослаблен. Длинные заголовки получили
-компактную шапку, текст и действия — локальную пагинацию. Добавлена проверка
-200px/font20 и доступности последней части текста через реальный runtime gesture.
-После исправления шрифтов полный локальный `make harness` повторно PASS: все
-compatibility/E02/product layouts, включая 200px/font20, feedback/pagination и
-browser bridge. Go backend с прошлого зелёного `make test` не менялся.
+- task.TestRoomsPresetsAtomicScopeAndHistory — транзакция набора/rollback, чужая семья, история.
+- task.TestRotationAcceptanceDepartureAndHandoffRace — очередь только после позднего approval, гонка решений.
+- task.TestRotationUndoRestoresOriginalTurn — восстановление предыдущего исполнителя.
+- task.TestRotationSkipsDepartedCurrentAssignee — уход не оставляет дело заблокированным.
+- task.TestRotationCannotScheduleSelfReviewerAndStaleHandoff,
+  TestReviewerCannotBecomeFutureRotatingPerformer — конфликт будущего исполнителя/проверяющего в обоих порядках настройки.
+- task.TestExpiredHandoffPreservesAssignment — 7-дневный срок.
+- bot.TestHandoffNotificationAndClosedOfferInvalidation — личная durable доставка, закрытое предложение не отправляется.
+- bot.TestWeeklyGoalSnapshotsAndDigestRestart, TestWeeklyGoalSurvivesTimezoneChange, TestWeeklyGoalForAnUnvisitedEmptyWeek — Monday snapshot, restart/no backlog, timezone не переписывает цель; пустая неделя без запусков сохраняет действовавшую цель.
+- shopping.TestShoppingAtomicBatchClaimVersionsAndScope — атомарный batch/гонка/version/audit/уход/restart.
+- assistant.TestShoppingDraftValidation — ограниченная schema, без чужих ID и смешанных команд.
 
-Deployment preparation: `python3 -m unittest discover -s tests/ops -v` — PASS:
-archive whitelist/links/path traversal/checksums/commit, права при umask 077,
-успешная активация, migration rollback до старта и сохранение accepted updates
-при readiness failure. SQLite и filesystem настоящие временные; systemctl,
-migration и health в этих tests контролируемые. Это не live server deployment.
-`bash -n ops/deploy-from-ci.sh` PASS. Проверка systemd unit внутри Cloud упёрлась
-в read-only /run/systemd; фактическая установка/применение лимитов пока не проверены.
-Дополнительно PASS: отказ до остановки сервиса при нехватке диска и ограниченная
-retention, не удаляющая посторонние пути. Всего 9 ops tests. Реальный упакованный
-CGO-disabled homequest-migrate выполнен на пустой SQLite и повторно на той же БД:
-оба запуска PASS. Архив ~136 MB, только явный whitelist; секретов/БД в нём нет.
+TDD воспроизвёл дефекты undo очереди, ушедшего исполнителя, изменения цели при
+timezone и конфликта проверяющего; исправления подтверждены зелёными регрессиями.
 
-Новые feature gates: TestFeatureCardBudgets создаёт реальные карточки через handlers
-с максимальными кириллическими полями и URL; make harness передаёт их в официальный
-renderer. TestGiftSecrecyAcrossProductPayloads использует A/B/C/D, конкурентные
-Bot.Handle, неизменность разрешённого автору state/подробностей и фактический вход
-контролируемого LLM adapter. Сырые данные дарителя не передаются этому adapter.
-TestFamilyReminderPlanThroughButtonsAndRestart проверяет invalidation старых jobs
-и snooze, сохранение сроков, смену политики владельцем и новые сообщения worker.
-403 tests проверяют отсутствие backlog, восстановление свежим private update и
-гонку запоздалого отказа с новым /start. Это controlled transport, не live Telegram.
+Ops: 9 проверок archive/checksum/path traversal, activation/rollback/retention/disk
+через python3 -m unittest discover -s tests/ops -v. systemctl/health контролируются;
+реального server deployment эти тесты не доказывают.
 
-Feature checkpoint 2026-11-16: `make test harness` exit 0; Go tests всех пакетов,
-9 spike + 9 linked E02 layouts, 32 product cards, 5 official-renderer screenshots,
-feedback/pagination и расширенный browser path — PASS. `go test -race
-./internal/homequest/bot ./internal/homequest/wishlist` — PASS. Реальные
-Telegram Widgets/напоминания/человеческий голос этим запуском не проверялись.
+
+Последний локальный полный make test/harness: PASS (16 ноября).
+HTML journeys: 174 + 101 + 80 + 43 = 398 состояний; официальный renderer:
+123 различные проекции на 200px + 16 новых экран/тема/ширина.
+Дополнительно прежние 9 spike, 9 связанных E02 и 32 граничные карточки PASS.
+Race bot/task/stats/shopping PASS. После уточнения политики пустых недель
+Go suite/build и plans HTML повторены. Live VyceAI eval 10/10 PASS (42.71 s);
+этот результат не распространяется на STT или настоящий Telegram-клиент.

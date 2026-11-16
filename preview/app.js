@@ -9,10 +9,16 @@ function render(){
  const boot=`var handlers={},pending={};window.TelegramWidget={chatData:${JSON.stringify(JSON.stringify(state)).replaceAll('<','\\u003c')},onEvent:function(n,f){handlers[n]=f},ready:function(){},request:function(data){return new Promise(function(resolve,reject){pending[data]={resolve:resolve,reject:reject};parent.postMessage({type:'request',data:data},'*')})}};addEventListener('message',function(e){if(e.source!==parent)return;var p=pending[e.data.action];if(p){if(e.data.error)p.reject({code:'FAILED'});else p.resolve({result:null});delete pending[e.data.action]}});new ResizeObserver(function(){parent.postMessage({type:'height',height:document.body.scrollHeight+16},'*')}).observe(document.documentElement);`;
  frame.srcdoc=`<!doctype html><meta charset="utf-8"><style>:root{${vars};color-scheme:${theme==='dark'?'dark':'light'}}body{margin:8px 12px;font:15px system-ui;background:var(--tg-theme-bg-color)}*{box-sizing:border-box}</style><script>${boot}</script>${html}`;
 }
+function present(result){
+ if(result.state){state=result.state;render()}else{state=null;frame.hidden=true;$('#reply').hidden=false;$('#reply').textContent=result.payload?.text||'Откройте дом';}
+ document.body.dataset.updateId=String(result.update_id);
+ document.body.dataset.renderCount=String(Number(document.body.dataset.renderCount||0)+1);
+}
+window.previewReceive=present;
 async function update(text='',action=''){
  const r=await fetch('/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({viewer:Number($('#viewer').value),text,action})});
  if(!r.ok)throw Error('handler');const result=await r.json();
- if(result.state){state=result.state;render()}else{state=null;frame.hidden=true;$('#reply').hidden=false;$('#reply').textContent=result.payload?.text||'Откройте дом';}
+ present(result);
  return result;
 }
 window.addEventListener('message',async e=>{

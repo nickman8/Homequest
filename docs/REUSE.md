@@ -131,3 +131,21 @@ STT выполнен на локально синтезированном рус
 из единственного NICKLLM_BASE_URL; legacy имена сохранены для совместимости.
 URL HTTPS-only, без userinfo/query; redirects отключены. Согласие привязано к
 провайдеру. Чужой SSH-сервер для этого переключения не менялся.
+
+
+## Наборы, комнаты, очередь и покупки
+
+Donetick того же SHA: реально используются Label (internal/label/model/model.go),
+связи chore_labels и ChoreAssignees/AssignmentStrategyRoundRobin
+(internal/chore/model/model.go, алгоритм из internal/chore/handler.go).
+Адаптация в task/rooms.go и task/rotation.go: круг семьи, активное членство,
+accepted_at, отдельный экземпляр, stale version, undo, запрет конфликта проверяющего.
+Новые метаданные комнат ссылаются на Label; отдельной копии названия нет.
+Проверены атомарный импорт, удаление группировки без удаления задач, очередь,
+позднее approval, уход, handoff race/expiry и undo.
+
+Тексты трёх наборов написаны для HomeQuest, не выданы за импорт из донора.
+Shopping и weekly goal — новые небольшие модули поверх той же GORM/SQLite,
+семейной авторизации и durable outbox. Покупки не создают вторую экономику:
+они не начисляют и не списывают баллы. Новые страницы используют существующий
+Open Props/Lucide шаблон без дополнительных runtime-библиотек.

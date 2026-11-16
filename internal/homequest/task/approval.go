@@ -100,7 +100,7 @@ func (s *Service) Submit(tg int64, circle, id int, photo string, now time.Time) 
 		if e = tx.Create(&history).Error; e != nil {
 			return e
 		}
-		out = Attempt{InstanceID: id, HistoryID: history.ID, UserID: user.ID, PhotoID: photo, Approval: chore.RequireApproval, Status: "review"}
+		out = Attempt{Rotation: chore.AssignStrategy == ch.AssignmentStrategyRoundRobin, AssignedSnapshot: chore.AssignedTo, InstanceID: id, HistoryID: history.ID, UserID: user.ID, PhotoID: photo, Approval: chore.RequireApproval, Status: "review"}
 		var rule Rule
 		_ = tx.First(&rule, "chore_id = ?", chore.ID).Error
 		out.ReviewerID = rule.ReviewerID
@@ -163,6 +163,9 @@ func accept(tx *gorm.DB, a *Attempt, i *Instance, now time.Time) error {
 		return e
 	}
 	if next != nil {
+		if e = rotate(tx, &definition); e != nil {
+			return e
+		}
 		if e = tx.Create(&Instance{ChoreID: i.ChoreID, CircleID: i.CircleID, DueAt: next, Version: 1}).Error; e != nil {
 			return e
 		}
@@ -291,6 +294,9 @@ func (s *Service) Undo(tg int64, circle, id int, now time.Time) error {
 			return e
 		}
 		for _, successor := range successors {
+			if successor.Version != 1 {
+				return errors.New("Следующее повторение уже изменено; обычная отмена недоступна")
+			}
 			var n int64
 			if e = tx.Model(&Attempt{}).Where("instance_id = ?", successor.ID).Count(&n).Error; e != nil {
 				return e
@@ -329,7 +335,11 @@ func (s *Service) Undo(tg int64, circle, id int, now time.Time) error {
 		if e = tx.Model(&i).Updates(map[string]any{"closed": false, "pending": false, "version": gorm.Expr("version + 1")}).Error; e != nil {
 			return e
 		}
-		return tx.Model(&ch.Chore{}).Where("id = ?", i.ChoreID).Updates(map[string]any{"is_active": true, "next_due_date": i.DueAt}).Error
+		updates := map[string]any{"is_active": true, "next_due_date": i.DueAt}
+		if a.Rotation {
+			updates["assigned_to"] = a.AssignedSnapshot
+		}
+		return tx.Model(&ch.Chore{}).Where("id = ?", i.ChoreID).Updates(updates).Error
 	})
 }
 
@@ -378,6 +388,15 @@ func (s *Service) SetReviewer(tg int64, circle, id, target int) error {
 			}
 			if chore.AssignedTo != nil && *chore.AssignedTo == target {
 				return errors.New("Исполнитель и проверяющий должны быть разными")
+			}
+			if chore.AssignStrategy == ch.AssignmentStrategyRoundRobin {
+				var queued int64
+				if e = tx.Model(&ch.ChoreAssignees{}).Where("chore_id=? AND user_id=?", chore.ID, target).Count(&queued).Error; e != nil {
+					return e
+				}
+				if queued > 0 {
+					return errors.New("Проверяющий входит в очередь. Выберите проверку любым другим участником")
+				}
 			}
 			reviewer = &target
 		}
