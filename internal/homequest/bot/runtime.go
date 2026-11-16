@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"gorm.io/gorm"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -52,9 +53,27 @@ func (b *Bot) Dispatch(ctx context.Context, api API) error {
 		if !ready {
 			continue
 		}
-		e = api.Call(ctx, row.Method, payload, nil)
+		if row.AutoRefresh {
+			var view CardView
+			if err := b.DB.First(&view, "viewer=?", row.Viewer).Error; err != nil && err != gorm.ErrRecordNotFound {
+				return err
+			}
+			if view.CircleID != row.CircleID || view.Screen != row.Screen || view.DeliveryID > row.ID {
+				if err := b.DB.Model(&row).Update("sent", true).Error; err != nil {
+					return err
+				}
+				continue
+			}
+		}
+		var reply json.RawMessage
+		e = api.Call(ctx, row.Method, payload, &reply)
 		if e == nil {
-			if e = b.DB.Model(&row).Update("sent", true).Error; e != nil {
+			if e = b.DB.Transaction(func(tx *gorm.DB) error {
+				if err := b.rememberView(tx, row, payload, reply); err != nil {
+					return err
+				}
+				return tx.Model(&row).Update("sent", true).Error
+			}); e != nil {
 				return e
 			}
 			continue
@@ -67,11 +86,7 @@ func (b *Bot) Dispatch(ctx context.Context, api API) error {
 			if !ok || json.Unmarshal([]byte(raw), &card) != nil {
 				return errors.New("invalid fallback projection")
 			}
-			buttons := [][]map[string]string{}
-			for _, button := range card.Buttons {
-				buttons = append(buttons, []map[string]string{{"text": button.Label, "callback_data": button.Action}})
-			}
-			fallback := map[string]any{"chat_id": payload["chat_id"], "text": card.Title + "\n\n" + card.Text, "reply_markup": map[string]any{"inline_keyboard": buttons}}
+			fallback := cardMessage(payload["chat_id"], card)
 			encoded, err := json.Marshal(fallback)
 			if err != nil {
 				return err
@@ -82,6 +97,7 @@ func (b *Bot) Dispatch(ctx context.Context, api API) error {
 			continue
 		}
 		delay := time.Duration(1<<uint(row.Attempts)) * time.Second
+		slog.Warn("delivery_retry", "delivery_id", row.ID, "method", row.Method, "attempt", row.Attempts+1)
 		var ae *widget.APIError
 		if errors.As(e, &ae) && ae.RetryAfter > 0 {
 			delay = time.Duration(ae.RetryAfter) * time.Second
@@ -125,20 +141,24 @@ func (b *Bot) Run(ctx context.Context, api API, status func(string)) error {
 	go func() {
 		for ctx.Err() == nil {
 			if e := b.PlanReminders(b.ReminderOffsets); e != nil {
+				status("scheduler_error")
 				workerDone <- e
 				cancel()
 				return
 			}
 			if e := b.PlanReviews(); e != nil {
+				status("scheduler_error")
 				workerDone <- e
 				cancel()
 				return
 			}
 			if e := b.Dispatch(ctx, api); e != nil {
+				status("scheduler_error")
 				workerDone <- e
 				cancel()
 				return
 			}
+			status("scheduler_ready")
 			select {
 			case <-ctx.Done():
 			case <-time.After(250 * time.Millisecond):

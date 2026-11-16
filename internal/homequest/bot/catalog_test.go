@@ -90,8 +90,17 @@ func TestCatalogsAndPremiumThroughUpdates(t *testing.T) {
 	click(900001, "points")
 	click(900001, "rewards:0")
 	click(900001, "redemptions:0")
+	var nReward int64
 	click(900001, "redemption:1:approve")
+	db.Table("hq_badges").Where("code = ?", "reward").Count(&nReward)
+	if nReward != 0 {
+		t.Fatal("reward badge before delivery")
+	}
 	click(900001, "redemption:1:deliver")
+	db.Table("hq_badges").Where("code = ?", "reward").Count(&nReward)
+	if nReward != 1 {
+		t.Fatal("missing delivered reward badge", nReward)
+	}
 	h, _ := b.Family.Current(900002)
 	balance, e := (&task.Service{DB: db}).Balance(900002, h.ID)
 	if e != nil || balance != 0 {

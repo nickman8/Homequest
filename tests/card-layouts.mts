@@ -18,4 +18,10 @@ for(const theme of ['light','dark','custom']){
  const r=await runWidget(html,{width:320,layout:true,theme:theme==='dark'?'dark':'light',...(theme==='custom'?{themeParams:{bg_color:'#edf4e8',text_color:'#183020',button_color:'#345a40'}}:{}),context:{canQuery:true,backgroundQuery:true,chatType:'private',viewer:{id:900001,first_name:'A'}},data:{chatData:JSON.stringify(cards['Тёплый дом']),publicData:null}});
  assert.deepEqual(r.diags,[]);assert.ok(r.height<=600);
 }
+// Legal long Russian strings and a larger client font must keep actions reachable.
+for(const [width,font] of [[200,15],[320,20],[390,20]]){
+ const long={title:'Дом близких людей, в котором всем спокойно и хорошо',text:'Часовой пояс: America/Argentina/Buenos_Aires\nУчастников: 12\nДела по дому — общий вклад в уют.',buttons:[{label:'Сегодня',action:'a'.repeat(32)},{label:'Добавить задание',action:'b'.repeat(32)},{label:'Мои баллы',action:'c'.repeat(32)},{label:'Подарки',action:'d'.repeat(32)},{label:'Настройки',action:'e'.repeat(32)},{label:'Мои дома',action:'f'.repeat(32)}]};
+ const r=await runWidget(html,{width,layout:true,text:{fontSize:font},data:{chatData:JSON.stringify(long),publicData:null}});
+ assert.deepEqual(r.diags,[]);assert.ok(r.height<=600,`long Russian ${width}px font ${font}: ${r.height}`);
+}
 console.log(`PASS ${count} product cards at 200px; 3 official-renderer screenshots`);

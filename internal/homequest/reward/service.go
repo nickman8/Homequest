@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-const Delivered r.RedemptionStatus = 3
-const Cancelled r.RedemptionStatus = 4
+const Delivered = r.RedemptionStatusDelivered
+const Cancelled = r.RedemptionStatusCancelled
 
 type Receipt struct {
 	Key          string `gorm:"primaryKey"`

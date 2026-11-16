@@ -9,7 +9,7 @@
 Основной UI — компактные Telegram Widgets; ввод — обычные сообщения.
 Сейчас Telegram запрещает Widgets обычным ботам даже в личных чатах
 (`INPUT_MEDIA_WIDGET_NOT_ALLOWED`): [подтверждение в Bot API #947 от 13 ноября](https://github.com/tdlib/telegram-bot-api/issues/947).
-Поэтому бот автоматически доставляет обычные сообщения с кнопками.
+Поэтому в текущем запуске TELEGRAM_UI=buttons: обычные сообщения с кнопками.
 
 **AI подключён через VyceAI**: `https://vyceai.com/v1`, проверенный ID
 `deepseek-4.1-flash-1017`. Реальные проверки JSON Schema, выполнения, отрицания,
@@ -18,6 +18,18 @@
 Локальный faster-whisper работает; синтетический STT smoke не подтвердил качество.
 
 ## Установка без Docker
+
+HTML-стенд: `make preview` (в Cloud добавить `GO=/workspace/toolchains/go/bin/go`).
+Открыть http://127.0.0.1:4173. Те же HTML-шаблоны, четыре вымышленных участника,
+настоящие обработчики и отдельная временная SQLite; без токенов и отправки в Telegram.
+Браузерный мост не считается проверкой совместимости: `make harness` отдельно
+запускает официальный QuickJS/validator/renderer и browser E2E.
+
+`TELEGRAM_UI=buttons` сразу отправляет обычные кнопки, без неудачных sendWidget.
+После восстановления Widgets установить `TELEGRAM_UI=widgets` (или `auto`) и
+перезапустить бот: тот же `widgets/family.html`, состояния и серверные действия.
+При явном запрете API в этих режимах сохраняется безопасный fallback.
+
 
 Go 1.24.3, Node 24, Python 3, npm, corepack, Git. В текущей Cloud-среде Go находится
 в `/workspace/toolchains/go/bin/go`; можно передать `GO=...` в make.
@@ -38,7 +50,9 @@ DATA_DIR=/absolute/private/data HOMEQUEST_SECRETS_FILE=/absolute/private/secrets
 curl -f http://127.0.0.1:2022/health
 ```
 
-Миграции GORM запускаются синхронно, SQLite `donetick.db` хранится в DATA_DIR.
+Отдельная миграция без сети/токена: `DATA_DIR=/absolute/private/data make migrate`.
+Остановите бот перед ней; проверяется тот же flock.
+Миграции GORM также запускаются синхронно при старте, SQLite `donetick.db` хранится в DATA_DIR.
 Второй локальный consumer блокируется flock; webhook не удаляется; Telegram 409
 останавливает polling. Нужны исходящие HTTPS-запросы, публичный endpoint не нужен.
 `make dev` запускает исходный внутренний Donetick backend на 2021; семье он не нужен.

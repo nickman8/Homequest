@@ -33,7 +33,7 @@ listening socket, после разрешённого запуска вне sand
 |---|---|---|
 | TelegramMessenger/widget-sandbox | `1cde0068daba8437f53eac0b61c395d29b8f89e3` (package 0.6.5) | неизменённый sandbox-node, QuickJS, validator, Chromium renderer, frozen pnpm lock |
 | Open Props | npm 1.7.23 + package-lock integrity | exports sizes/borders: size-2, size-3, radius-3 извлекаются при сборке |
-| Lucide Static | npm 1.73.0 + package-lock integrity | icons/house.svg inline; лицензия сохранена |
+| Lucide Static | npm 1.73.0 + package-lock integrity | icons/{house,circle-check,gift,trophy,calendar-days,mic,users,settings}.svg inline; лицензия сохранена |
 
 README sandbox описывает старый SDK без запросов; исходники и runtime-проверка
 подтвердили request/chatDataChanged. Пин обязателен. В production JS-библиотеки не входят.
@@ -126,7 +126,7 @@ STT выполнен на локально синтезированном рус
 Проверены https://vyceai.com/v1/models (200) и chat/completions (200).
 Подтверждён model ID `deepseek-4.1-flash-1017`; отображаемое имя не использовано
 как выдуманный slug. Gateway принял JSON Schema strict и вернул корректную команду.
-Реальный Go-адаптер прошёл completion/negation/future/draft и продуктовый путь
+Реальный Go-адаптер прошёл 8 случаев completion/negation/future/intention/uncertainty/past/multiple/draft и продуктовый путь
 с SQLite (controlled Telegram transport, реальная LLM). API URL теперь берётся
 из единственного NICKLLM_BASE_URL; legacy имена сохранены для совместимости.
 URL HTTPS-only, без userinfo/query; redirects отключены. Согласие привязано к

@@ -10,7 +10,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -24,11 +24,18 @@ import (
 
 func main() {
 	if e := run(); e != nil {
-		log.Print("HomeQuest stopped: ", e)
+		slog.Error("homequest_stopped", "reason", e.Error())
 		os.Exit(1)
 	}
 }
 func run() error {
+	var level slog.Level
+	if v := os.Getenv("LOG_LEVEL"); v != "" {
+		if e := level.UnmarshalText([]byte(v)); e != nil {
+			return errors.New("invalid LOG_LEVEL")
+		}
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 	dir := os.Getenv("DATA_DIR")
 	if dir == "" {
 		return errors.New("DATA_DIR required")
@@ -96,6 +103,9 @@ func run() error {
 		return secret[name]
 	}
 	app.AIProvider = config("NICKLLM_BASE_URL")
+	if e = app.ConfigureUI(config("TELEGRAM_UI")); e != nil {
+		return e
+	}
 	llmStatus := "model_not_verified"
 	if model := config("NICKLLM_MODEL"); model != "" && config("NICKLLM_API_KEY") != "" && config("NICKLLM_BASE_URL") != "" {
 		app.LLM = &assistant.NickLLM{Key: config("NICKLLM_API_KEY"), Model: model, BaseURL: config("NICKLLM_BASE_URL")}
@@ -141,6 +151,8 @@ func run() error {
 	}
 	var state atomic.Value
 	state.Store("starting")
+	var schedulerTick atomic.Int64
+	var schedulerFailed atomic.Bool
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -151,7 +163,17 @@ func run() error {
 		}
 		var fallbackCount int64
 		db.Model(&bot.Delivery{}).Where("widget_fallback = ?", true).Count(&fallbackCount)
-		_ = json.NewEncoder(w).Encode(map[string]any{"database": "ready", "telegram": state.Load(), "llm": llmStatus, "stt": sttStatus, "scheduler": "polling_worker", "widget_fallbacks": fallbackCount})
+		scheduler := "starting"
+		if tick := schedulerTick.Load(); tick > 0 {
+			scheduler = "ready"
+			if time.Since(time.Unix(0, tick)) > 30*time.Second {
+				scheduler = "delayed"
+			}
+		}
+		if schedulerFailed.Load() {
+			scheduler = "error"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"database": "ready", "telegram": state.Load(), "llm": llmStatus, "stt": sttStatus, "scheduler": scheduler, "ui": app.UIMode, "widget_fallbacks": fallbackCount})
 	})
 	addr := os.Getenv("HOMEQUEST_HEALTH_ADDR")
 	if addr == "" {
@@ -165,6 +187,19 @@ func run() error {
 		}
 	}()
 	defer server.Close()
-	log.Print("HomeQuest starting; bot @", me.Username)
-	return app.Run(ctx, api, func(s string) { state.Store(s) })
+	slog.Info("homequest_starting", "bot", me.Username, "ui", app.UIMode)
+	return app.Run(ctx, api, func(s string) {
+		switch s {
+		case "scheduler_ready":
+			schedulerTick.Store(time.Now().UnixNano())
+			schedulerFailed.Store(false)
+		case "scheduler_error":
+			schedulerFailed.Store(true)
+			slog.Error("scheduler_failed")
+		case "assistant_worker_error":
+			slog.Error("assistant_worker_failed")
+		default:
+			state.Store(s)
+		}
+	})
 }

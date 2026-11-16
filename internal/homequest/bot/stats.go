@@ -8,6 +8,7 @@ import (
 )
 
 func (b *Bot) points(uid, msg int64, circle int) error {
+	b = b.screenFor("points")
 	s := &stats.Service{DB: b.DB, WeeklyGoal: 100}
 	v, e := s.Summary(uid, circle, b.Now())
 	if e != nil {
@@ -16,6 +17,7 @@ func (b *Bot) points(uid, msg int64, circle int) error {
 	return b.card(uid, msg, "Мой вклад", fmt.Sprintf("Баланс: %d — можно тратить на награды\nЗа неделю: %d — принятые дела\nОпыт за всё время: %d", v.Balance, v.Week, v.XP), circle, "ranking:0", "Рейтинг", "badges", "Достижения", "house", "Дом и история", "rewards:0", "Награды", "premium", "Premium", "home", "Назад")
 }
 func (b *Bot) ranking(uid, msg int64, circle, page int) error {
+	b = b.screenFor(fmt.Sprintf("ranking:%d", page))
 	s := &stats.Service{DB: b.DB, WeeklyGoal: 100}
 	rows, e := s.Ranking(uid, circle, b.Now())
 	if e != nil {
@@ -44,6 +46,7 @@ func (b *Bot) ranking(uid, msg int64, circle, page int) error {
 	return b.card(uid, msg, "Вклад за неделю", strings.Join(lines, "\n")+"\nС понедельника 00:00 · "+home.Timezone, circle, fmt.Sprintf("ranking:%d", next), "Далее", "points", "Назад")
 }
 func (b *Bot) badges(uid, msg int64, circle int) error {
+	b = b.screenFor("badges")
 	names, e := (&stats.Service{DB: b.DB, WeeklyGoal: 100}).Badges(uid, circle, b.Now())
 	if e != nil {
 		return e
@@ -55,6 +58,7 @@ func (b *Bot) badges(uid, msg int64, circle int) error {
 	return b.card(uid, msg, "Достижения", text, circle, "points", "Назад")
 }
 func (b *Bot) house(uid, msg int64, circle int) error {
+	b = b.screenFor("house")
 	v, e := (&stats.Service{DB: b.DB, WeeklyGoal: 100}).Summary(uid, circle, b.Now())
 	if e != nil {
 		return e
@@ -118,5 +122,5 @@ func (b *Bot) awardBadges(uid int64) error {
 			return e
 		}
 	}
-	return nil
+	return b.refreshFamilyViews(uid, h.ID)
 }

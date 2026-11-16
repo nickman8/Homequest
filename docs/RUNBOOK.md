@@ -4,11 +4,11 @@
 `/workspace/homequest-private/runtime/donetick.db`, секреты
 `/workspace/homequest-private/secrets.json` (0600), лог `bot.log` в private-каталоге.
 Никакие из этих приватных файлов не входят в Git. SQLite backup перед последним
-обновлением: `/workspace/homequest-private/pre-upgrade-5c58982.db`.
+обновлением: `/workspace/homequest-private/pre-upgrade-e41b7b6.db`.
 
-Аудит 16 ноября: прежний временный процесс уже завершился. После getMe/webhook
-и проверки отсутствия второго consumer перезапущен `bin/homequest` (код f54f780);
-health подтвердил ready/polling. Проверять health заново при каждом возобновлении.
+Проверять health при каждом возобновлении. Код обновляется после тестов, с backup
+и остановкой только собственного polling consumer. Доступность после завершения
+Cloud-сессии не гарантирована.
 
 ```sh
 cd /workspace/Homequest
@@ -16,6 +16,7 @@ make widgets build GO=/workspace/toolchains/go/bin/go
 DATA_DIR=/workspace/homequest-private/runtime \
 HOMEQUEST_SECRETS_FILE=/workspace/homequest-private/secrets.json \
 BILLING_MODE=manual_test \
+TELEGRAM_UI=buttons \
 STT_PYTHON=/workspace/homequest-private/stt-venv/bin/python \
 STT_MODEL_DIR=/workspace/homequest-private/stt-models \
 ./bin/homequest
@@ -28,7 +29,7 @@ consumer. Telegram 409 останавливает polling. Webhook провер�
 pending updates не сбрасываются. Cursor/receipts сохраняются в той же БД.
 
 Health: `curl -f http://127.0.0.1:2022/health`. Показывает DB/polling/настройку
-LLM/STT и worker. «Configured» не означает успешный live AI smoke. Миграции GORM
+LLM/STT, выбранный UI и scheduler heartbeat (ready/delayed/error). «Configured» не означает успешный live AI smoke. Миграции GORM
 синхронны при старте; запуск на той же БД идемпотентен. Не публиковать внутренний
 Donetick backend 2021 без отдельного аудита. Для polling он не требуется.
 
@@ -65,6 +66,21 @@ Codex Cloud не гарантирует жизнь процесса после �
 не меняет. Здесь не используются keepalive-задачи для продления среды.
 
 При точном Telegram INPUT_MEDIA_WIDGET_NOT_ALLOWED outbox сохраняет fallback
-в sendMessage с теми же actions; health показывает widget_fallbacks. Это отдельный
-серверный блокер Widgets, не успех их live-проверки. Не устранять его бесконечными
+в sendMessage с теми же actions; health показывает widget_fallbacks. Это ограничение
+сервера Widgets, не успех их live-проверки и не блокер HTML-разработки. Не устранять его бесконечными
 повторами. Статические шаблоны/официальный harness сохранены для доступных клиентов.
+
+HTML preview: `make preview GO=/workspace/toolchains/go/bin/go`, затем
+http://127.0.0.1:4173. Это loopback-стенд с временной SQLite и вымышленными A/B/C/D.
+Он не публичная ссылка для телефона. Остановка Ctrl-C удаляет его временную БД.
+После включения Widgets у Telegram: TELEGRAM_UI=widgets и обычный restart;
+пересоздание доменных данных не требуется.
+
+Отдельная миграция: остановить бот, выполнить `DATA_DIR=/absolute/private/data
+make migrate GO=/workspace/toolchains/go/bin/go`. Она завершается после миграций,
+не обращается в Telegram и не запускает workers. Повтор безопасен.
+
+Проверено 2026-11-16 07:12 UTC: запущен код e41b7b6; health: database=ready,
+telegram=polling, scheduler=ready, ui=buttons. LLM/STT configured; live-проверки
+отдельно в TEST_MATRIX. Процесс Cloud session 93316; это не systemd service.
+HTML preview session 70428, loopback 4173, HTTP 200.

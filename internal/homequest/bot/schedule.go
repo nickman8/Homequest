@@ -145,3 +145,24 @@ func (b *Bot) assignees(uid, msg int64, circle, id, page int) error {
 	}
 	return b.card(uid, msg, "Исполнитель", string(name), circle, fmt.Sprintf("assignee:%d:%d", id, m.ID), "Назначить", fmt.Sprintf("assign:%d:%d", id, (page+1)%len(h.Members)), "Следующий", fmt.Sprintf("assignee:%d:0", id), "Может выполнить любой", "tasks", "Назад")
 }
+
+func scheduleText(s task.Schedule) string {
+	clock := fmt.Sprintf(" · %02d:%02d", s.Hour, s.Minute)
+	switch s.Mode {
+	case "daily":
+		return "Каждый день" + clock
+	case "weekdays":
+		names := map[string]string{"monday": "пн", "tuesday": "вт", "wednesday": "ср", "thursday": "чт", "friday": "пт", "saturday": "сб", "sunday": "вс"}
+		days := make([]string, 0, len(s.Days))
+		for _, day := range s.Days {
+			days = append(days, names[day])
+		}
+		return "По дням: " + strings.Join(days, ", ") + clock
+	case "interval":
+		return fmt.Sprintf("Каждые %d дн.", s.Every) + clock
+	case "after":
+		return fmt.Sprintf("Через %d дн. после принятия", s.Every)
+	default:
+		return "Без повторения"
+	}
+}

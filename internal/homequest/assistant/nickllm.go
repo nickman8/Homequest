@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -15,6 +16,12 @@ import (
 type NickLLM struct {
 	Key, Model, BaseURL string
 	HTTP                *http.Client
+}
+
+type GatewayError struct{ Status int }
+
+func (e *GatewayError) Error() string {
+	return fmt.Sprintf("AI gateway rejected request (HTTP %d)", e.Status)
 }
 
 // Model must be the verified provider ID supplied in NICKLLM_MODEL. No fallback.
@@ -52,7 +59,7 @@ func (n *NickLLM) Parse(ctx context.Context, text string, tasks []Candidate, zon
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return Command{}, errors.New("AI gateway request rejected")
+		return Command{}, &GatewayError{Status: resp.StatusCode}
 	}
 	var body struct {
 		Choices []struct {

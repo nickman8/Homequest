@@ -1,7 +1,7 @@
 # Карточки HomeQuest
 
 Нативная тема Telegram, Open Props 1.7.23 (size-2/3, radius-3), Lucide Static 1.73.0
-(house). LICENSE в docs/licenses. build-widgets.mjs извлекает токены при сборке;
+(8 отдельных SVG). LICENSE в docs/licenses. build-widgets.mjs извлекает токены при сборке;
 в сообщении нет CDN, React, внешних шрифтов, CSS imports или запросов в сеть.
 
 `widgets/family.html` — единый продуктовый шаблон: заголовок, текст, список действий.
@@ -19,5 +19,21 @@ renderer: [light](screenshots/home-light.png), [dark](screenshots/home-dark.png)
 [custom](screenshots/home-custom.png). Проверка выявила и исправила прозрачный фон
 панели на белом тестовом canvas тёмной темы. Это не скриншоты Telegram-клиента.
 
-Пока используется одна Lucide house, а не весь задуманный набор иконок.
+Источник шаблона: widgets/src/card.css и card.js, сборка в family.html.
+Использованы 8 отдельных Lucide SVG: house, circle-check, gift, trophy,
+calendar-days, mic, users, settings. Кнопки: главное действие во всю ширину,
+дополнительные — сетка из двух колонок, на 200px одна колонка. Все ≥44px. На узком экране по 3 действия; при длинном
+заголовке по 2. «Ещё действия» переключает локальную страницу, не вызывает backend.
+Цвета продуктовой карточки только Telegram palette; preview предлагает шалфейную тему.
+Open Props size-2/3 и radius-3 подставляются в CSS на этапе сборки.
+Шаблон меньше целевого бюджета 3500 байт zlib9. Полный пакет/sprite не встраивается.
+
+preview/ — отдельная оболочка разработчика, не Mini App. iframe получает точно
+тот же HTML; только снаружи добавляется browser bridge к локальному bot-probe.
+Страницы не содержат реальных семей/ключей, сервер слушает только loopback.
+Browser E2E проверяет создание, приглашение, задание, выполнение и баланс.
+ACK без state update, RATE_LIMITED/TIMEOUT/FAILED проверены в официальном runtime.
 Полная визуальная приёмка каждого редкого состояния и живого клиента остаётся открытой.
+
+Текущая сборка: 8562 байта UTF-8; 2894 байт Python zlib9
+(2944 байта Node zlib9); оба ниже целевого бюджета 3500.

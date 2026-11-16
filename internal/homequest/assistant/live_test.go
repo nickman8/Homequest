@@ -26,6 +26,10 @@ func TestLiveVyceAISemantics(t *testing.T) {
 		{"completion", "Я выкинул мусор", "complete"},
 		{"negation", "Я не выкинул мусор", "no_effect"},
 		{"future", "Я завтра выкину мусор", "no_effect"},
+		{"intention", "Надо выкинуть мусор", "no_effect"},
+		{"uncertain", "Мне кажется, мусор уже вынесли", "no_effect"},
+		{"past", "Я выкинул мусор вчера", "no_effect"},
+		{"multiple", "Выкинул мусор и помыл посуду", "confirm_multiple"},
 		{"draft", "Напоминай выносить мусор каждый вторник в семь вечера, 10 баллов", "draft"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

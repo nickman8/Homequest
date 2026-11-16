@@ -3,6 +3,7 @@ package assistant
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -12,6 +13,23 @@ import (
 type captureTransport struct {
 	t    *testing.T
 	host string
+}
+
+type rejectedGateway struct{}
+
+func (rejectedGateway) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: 403, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("fixture-key private family text"))}, nil
+}
+func TestGatewayRejectionHasSafeStatus(t *testing.T) {
+	n := &NickLLM{BaseURL: "https://gateway.example/v1", Key: "fixture-key", Model: "verified", HTTP: &http.Client{Transport: rejectedGateway{}}}
+	_, e := n.Parse(context.Background(), "private family text", nil, "UTC")
+	var rejected *GatewayError
+	if !errors.As(e, &rejected) || rejected.Status != 403 {
+		t.Fatal("missing status")
+	}
+	if strings.Contains(e.Error(), "fixture-key") || strings.Contains(e.Error(), "family text") {
+		t.Fatal("sensitive gateway error")
+	}
 }
 
 func (c captureTransport) RoundTrip(r *http.Request) (*http.Response, error) {

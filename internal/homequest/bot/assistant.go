@@ -265,10 +265,7 @@ func (b *Bot) ProcessAI(ctx context.Context) error {
 			text := ""
 			if command.Draft != nil {
 				d := command.Draft
-				text = fmt.Sprintf("%s\n%d баллов\n%s · %02d:%02d · %s", short(d.Title, 45), d.Points, d.Schedule.Mode, d.Schedule.Hour, d.Schedule.Minute, home.Timezone)
-				if len(d.Schedule.Days) > 0 {
-					text += "\n" + strings.Join(d.Schedule.Days, ",")
-				}
+				text = fmt.Sprintf("%s\n%d баллов\n%s\n%s", short(d.Title, 45), d.Points, scheduleText(d.Schedule), home.Timezone)
 			} else {
 				for _, id := range command.IDs {
 					for _, c := range candidates {

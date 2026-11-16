@@ -80,7 +80,7 @@ func TestInvalidZoneAndExplicitContext(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	_, e = s.Create(900002, "Второй", "UTC")
+	second, e := s.Create(900002, "Второй", "UTC")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -88,8 +88,39 @@ func TestInvalidZoneAndExplicitContext(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = s.Join(900002, token, time.Now()); e == nil {
-		t.Fatal("implicit context change")
+	if e = s.Join(900002, token, time.Now()); e != nil {
+		t.Fatal(e)
+	}
+	current, e := s.Current(900002)
+	if e != nil || current.ID != second.ID {
+		t.Fatal("implicit context change", e)
+	}
+	homes, e := s.Homes(900002)
+	if e != nil || len(homes) != 2 {
+		t.Fatal("lost membership", homes, e)
+	}
+	_ = s.SetStep(900002, "task_name", "old house draft")
+	if e = s.Switch(900002, homes[0].ID); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = s.View(900002, second.ID); e == nil {
+		t.Fatal("old context remained authorized")
+	}
+	step, _ := s.Step(900002)
+	if step.Step != "" || step.Draft != "" {
+		t.Fatal("cross-house draft")
+	}
+	if e = s.Switch(900001, second.ID); e == nil {
+		t.Fatal("foreign switch")
+	}
+	if e = s.Leave(900002); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.Switch(900002, homes[0].ID); e == nil {
+		t.Fatal("removed membership switch")
+	}
+	if e = s.Switch(900002, second.ID); e != nil {
+		t.Fatal("remaining membership inaccessible", e)
 	}
 }
 

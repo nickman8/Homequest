@@ -61,6 +61,12 @@ func TestRedemptionReservationRefundSnapshotAndUndo(t *testing.T) {
 	if e = s.Edit(900001, h.ID, r.ID, "Новое название", 100); e != nil {
 		t.Fatal(e)
 	}
+	if e = s.Archive(900001, h.ID, r.ID); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = s.Request(900002, h.ID, r.ID, "archived", now); e == nil {
+		t.Fatal("archived reward requested")
+	}
 	if e = s.Resolve(900001, h.ID, requests[0], "reject", now); e != nil {
 		t.Fatal(e)
 	}
@@ -74,7 +80,10 @@ func TestRedemptionReservationRefundSnapshotAndUndo(t *testing.T) {
 	if summary.XP != 10 || summary.Week != 10 {
 		t.Fatal(summary)
 	}
-	_ = s.Edit(900001, h.ID, r.ID, "Фильм", 10)
+	r, e = s.Create(900001, h.ID, "Фильм", "Вечером", 10)
+	if e != nil {
+		t.Fatal(e)
+	}
 	v, e := s.Request(900002, h.ID, r.ID, "last", now)
 	if e != nil {
 		t.Fatal(e)

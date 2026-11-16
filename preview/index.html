@@ -1,0 +1,10 @@
+<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HomeQuest · Дом начинается с нас</title><link rel="stylesheet" href="/style.css">
+<main><header><span class="logo">⌂</span><div><strong>HomeQuest</strong><p>Дом начинается с нас</p></div><small>Локальный стенд</small></header>
+<section class="intro"><span class="eyebrow">МАЛЕНЬКИЕ ДЕЛА. ОБЩИЙ УЮТ.</span><h1>Заботиться о доме<br>приятнее вместе.</h1><p>Общие дела, маленькие радости и подарки близким — в одном спокойном месте.</p></section>
+<section class="workspace"><aside><h2>Посмотреть свой дом</h2><p>Здесь четыре вымышленных участника. Создайте дом от A, затем передайте приглашение B или C.</p>
+<label>Участник<select id="viewer"><option value="900001">A · Александра</option><option value="900002">B · Борис</option><option value="900003">C · Саша</option><option value="900004">D · Другой дом</option></select></label>
+<label>Тема<select id="theme"><option value="light">Светлая</option><option value="dark">Тёмная</option><option value="custom">Шалфей</option></select></label>
+<label>Ширина карточки<select id="width"><option>320</option><option>390</option><option>200</option></select></label>
+<button id="home">Открыть дом</button><p class="note">Тот же HTML отправляется в Telegram. Здесь API клиента заменён мостом к настоящим обработчикам и отдельной тестовой БД. Совместимость проверяется дополнительно официальным runtime.</p></aside>
+<div class="phone"><div class="chat-header"><span class="avatar">⌂</span><div><strong>HomeQuest</strong><small>Ваш семейный помощник</small></div></div><div class="chat"><div class="day">Сегодня · тестовый дом</div><iframe title="Карточка HomeQuest" sandbox="allow-scripts"></iframe><div id="reply" hidden></div></div><form id="composer"><input id="message" aria-label="Сообщение боту" placeholder="Написать сообщение…" autocomplete="off"><button aria-label="Отправить">↑</button></form></div>
+</section><footer>Никаких настоящих сообщений, платежей или семейных данных. База стенда удаляется при остановке.</footer></main><script type="module" src="/app.js"></script></html>

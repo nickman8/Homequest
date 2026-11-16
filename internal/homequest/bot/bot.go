@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -77,6 +78,8 @@ type Receipt struct {
 func (Receipt) TableName() string { return "hq_update_receipts" }
 
 type Delivery struct {
+	AutoRefresh    bool
+	Screen         string
 	WidgetFallback bool
 	AttemptID      int
 	EventKey       *string `gorm:"uniqueIndex"`
@@ -121,6 +124,9 @@ type Card struct {
 	Buttons []Button `json:"buttons"`
 }
 type Bot struct {
+	autoRefresh     bool
+	screen          string
+	UIMode          string
 	AIProvider      string
 	LLM             assistant.LLM
 	STT             assistant.STT
@@ -156,11 +162,11 @@ func New(db *gorm.DB, html, username string) (*Bot, error) {
 	if _, e = billing.New(db, ""); e != nil {
 		return nil, e
 	}
-	e = db.AutoMigrate(&Receipt{}, &Cursor{}, &Delivery{}, &Action{}, &u.UserNotificationPreference{}, &RestPreference{}, &AIJob{}, &AIConsent{})
+	e = db.AutoMigrate(&Receipt{}, &Cursor{}, &Delivery{}, &Action{}, &CardView{}, &u.UserNotificationPreference{}, &RestPreference{}, &AIJob{}, &AIConsent{})
 	return &Bot{DB: db, Family: f, HTML: html, Username: username, Now: func() time.Time { return time.Now().UTC() }, ReminderOffsets: []int{-60, 0, 120}}, e
 }
 func (b *Bot) Handle(update Update) error {
-	return b.DB.Transaction(func(tx *gorm.DB) error {
+	err := b.DB.Transaction(func(tx *gorm.DB) error {
 		r := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&Receipt{ID: update.ID})
 		if r.Error != nil {
 			return r.Error
@@ -218,13 +224,19 @@ func (b *Bot) Handle(update Update) error {
 		}
 		return nil
 	})
+	if err != nil {
+		slog.Error("update_failed", "update_id", update.ID)
+	} else {
+		slog.Info("update_handled", "update_id", update.ID)
+	}
+	return err
 }
 func (b *Bot) queue(method string, p any) error {
 	raw, e := json.Marshal(p)
 	if e != nil {
 		return e
 	}
-	d := Delivery{Method: method, Payload: string(raw), Next: b.Now()}
+	d := Delivery{Method: method, Payload: string(raw), Next: b.Now(), Screen: b.screen, AutoRefresh: b.autoRefresh}
 	if p, ok := p.(map[string]any); ok {
 		if uid, ok := p["chat_id"].(int64); ok {
 			d.Viewer = uid
@@ -295,6 +307,9 @@ func (b *Bot) card(uid, msg int64, title, text string, circle int, options ...st
 	if e = widget.Validate([]byte(b.HTML), string(raw), ""); e != nil {
 		return e
 	}
+	if b.UIMode == "buttons" {
+		return b.queue("sendMessage", cardMessage(uid, state))
+	}
 	if msg != 0 {
 		return b.queue("editMessageWidgetData", map[string]any{"chat_id": uid, "message_id": msg, "chat_data": string(raw)})
 	}
@@ -305,11 +320,20 @@ func (b *Bot) card(uid, msg int64, title, text string, circle int, options ...st
 	return b.queue("sendWidget", map[string]any{"chat_id": uid, "html": b.HTML, "chat_data": string(raw), "allow_queries": true, "caption": "HomeQuest · Если карточка не отображается, используйте кнопки ниже или /start.", "reply_markup": map[string]any{"inline_keyboard": keyboard}})
 }
 func (b *Bot) home(uid, msg int64) error {
+	b = b.screenFor("home")
 	h, e := b.Family.Current(uid)
 	if e != nil {
+		if homes, err := b.Family.Homes(uid); err == nil && len(homes) > 0 {
+			return b.homes(uid, msg, 0)
+		}
 		return b.card(uid, msg, "Добро пожаловать домой", "Создайте дом или откройте приглашение близкого человека.", 0, "create", "Создать дом")
 	}
 	opts := []string{"tasks", "Сегодня", "new_task", "Добавить задание", "points", "Мои баллы", "wishes:0", "Подарки", "settings", "Настройки"}
+	if homes, err := b.Family.Homes(uid); err != nil {
+		return err
+	} else if len(homes) > 1 {
+		opts = append(opts, "homes:0", "Мои дома")
+	}
 
 	return b.card(uid, msg, h.Name, fmt.Sprintf("Часовой пояс: %s\nУчастников: %d\nДела по дому — общий вклад в уют.", h.Timezone, len(h.Members)), h.ID, opts...)
 }
@@ -344,6 +368,14 @@ func (b *Bot) message(uid int64, text string) error {
 	if strings.HasPrefix(text, "/start join_") {
 		if e := b.Family.Join(uid, strings.TrimPrefix(text, "/start join_"), b.Now()); e != nil {
 			return b.say(uid, e.Error())
+		}
+		if e := b.Family.SetStep(uid, "", ""); e != nil {
+			return e
+		}
+		if homes, e := b.Family.Homes(uid); e != nil {
+			return e
+		} else if len(homes) > 1 {
+			return b.homes(uid, 0, 0)
 		}
 		return b.home(uid, 0)
 	}
@@ -460,6 +492,23 @@ func (b *Bot) action(uid int64, token string, msg int64) error {
 	if e := b.DB.Model(&a).Update("used", true).Error; e != nil {
 		return e
 	}
+	if strings.HasPrefix(a.Kind, "homes:") {
+		page, e := strconv.Atoi(strings.TrimPrefix(a.Kind, "homes:"))
+		if e != nil {
+			return e
+		}
+		return b.homes(uid, msg, page)
+	}
+	if strings.HasPrefix(a.Kind, "switch_home:") {
+		id, e := strconv.Atoi(strings.TrimPrefix(a.Kind, "switch_home:"))
+		if e != nil {
+			return e
+		}
+		if e = b.Family.Switch(uid, id); e != nil {
+			return b.say(uid, "Этот дом больше недоступен. Откройте /start.")
+		}
+		return b.home(uid, msg)
+	}
 	if strings.HasPrefix(a.Kind, "done:") {
 		id, e := strconv.Atoi(strings.TrimPrefix(a.Kind, "done:"))
 		if e != nil {
@@ -553,6 +602,7 @@ func (b *Bot) action(uid int64, token string, msg int64) error {
 }
 
 func (b *Bot) tasks(uid, msg int64, page int) error {
+	b = b.screenFor(fmt.Sprintf("tasks:%d", page))
 	h, e := b.Family.Current(uid)
 	if e != nil {
 		return b.home(uid, msg)

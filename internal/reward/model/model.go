@@ -21,6 +21,8 @@ const (
 	RedemptionStatusPending RedemptionStatus = iota
 	RedemptionStatusApproved
 	RedemptionStatusRejected
+	RedemptionStatusDelivered
+	RedemptionStatusCancelled
 )
 
 // RewardRedemption is a member's request to spend points on a Reward, subject

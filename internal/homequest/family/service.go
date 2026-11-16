@@ -233,9 +233,6 @@ func (s *Service) Join(tg int64, token string, now time.Time) error {
 		if tx.First(&invite, "hash = ? AND revoked = ? AND expires > ?", digest(token), false, now).Error != nil {
 			return ErrDenied
 		}
-		if user.CircleID != 0 && user.CircleID != invite.CircleID {
-			return errors.New("Сначала явно выйдите из текущего дома; контекст не переключён")
-		}
 		var home c.Circle
 		if tx.First(&home, "id = ? AND disabled = ?", invite.CircleID, false).Error != nil {
 			return ErrDenied
@@ -244,7 +241,11 @@ func (s *Service) Join(tg int64, token string, now time.Time) error {
 		if e = tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "user_id"}, {Name: "circle_id"}}, DoUpdates: clause.Assignments(map[string]any{"is_active": true})}).Create(&row).Error; e != nil {
 			return e
 		}
-		return tx.Model(&user).Update("circle_id", invite.CircleID).Error
+		// Joining preserves all memberships. A second home never becomes current implicitly.
+		if user.CircleID == 0 {
+			return tx.Model(&user).Update("circle_id", invite.CircleID).Error
+		}
+		return nil
 	})
 }
 func (s *Service) Revoke(tg int64) error {

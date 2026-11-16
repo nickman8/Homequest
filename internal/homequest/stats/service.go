@@ -3,6 +3,7 @@ package stats
 import (
 	"donetick.com/core/internal/homequest/family"
 	"donetick.com/core/internal/homequest/task"
+	r "donetick.com/core/internal/reward/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"sort"
@@ -37,7 +38,7 @@ type Badge struct {
 
 func (Badge) TableName() string { return "hq_badges" }
 func New(db *gorm.DB) (*Service, error) {
-	return &Service{DB: db, WeeklyGoal: 100}, db.AutoMigrate(&Badge{})
+	return &Service{DB: db, WeeklyGoal: 100}, db.AutoMigrate(&Badge{}, &r.RewardRedemption{})
 }
 func weekStart(now time.Time, zone string) (time.Time, error) {
 	loc, e := time.LoadLocation(zone)
@@ -123,7 +124,7 @@ func (s *Service) Ranking(tg int64, circle int, now time.Time) ([]Rank, error) {
 	return rows, nil
 }
 
-var BadgeNames = map[string]string{"first": "Первое дело", "ten": "10 домашних дел", "fifty": "50 домашних дел", "photo": "Первый фотоотчёт", "days": "Вклад в три разных дня", "together": "Общая недельная цель"}
+var BadgeNames = map[string]string{"first": "Первое дело", "ten": "10 домашних дел", "fifty": "50 домашних дел", "photo": "Первый фотоотчёт", "days": "Вклад в три разных дня", "together": "Общая недельная цель", "reward": "Первая полученная награда"}
 
 func (s *Service) Badges(tg int64, circle int, now time.Time) ([]string, error) {
 	f := &family.Service{DB: s.DB}
@@ -157,10 +158,16 @@ func (s *Service) Badges(tg int64, circle int, now time.Time) ([]string, error) 
 	if e != nil {
 		return nil, e
 	}
+	var delivered int64
+	// HomeQuest's delivered state is distinct from requested/approved; spending
+	// alone never grants this achievement. The source is the existing redemption.
+	if e = s.DB.Model(&r.RewardRedemption{}).Where("circle_id=? AND user_id=? AND status=?", circle, user.ID, r.RedemptionStatusDelivered).Count(&delivered).Error; e != nil {
+		return nil, e
+	}
 	conditions := []struct {
 		Code string
 		Met  bool
-	}{{"first", len(attempts) >= 1}, {"ten", len(attempts) >= 10}, {"fifty", len(attempts) >= 50}, {"photo", photo}, {"days", len(days) >= 3}, {"together", week >= s.WeeklyGoal && len(home.Members) >= 2}}
+	}{{"first", len(attempts) >= 1}, {"ten", len(attempts) >= 10}, {"fifty", len(attempts) >= 50}, {"photo", photo}, {"days", len(days) >= 3}, {"together", week >= s.WeeklyGoal && len(home.Members) >= 2}, {"reward", delivered > 0}}
 	var names []string
 	for _, condition := range conditions {
 		if !condition.Met {
