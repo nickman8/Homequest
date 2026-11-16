@@ -111,6 +111,9 @@ func (b *Bot) PlanReminders(offsets []int) error {
 					if e != nil {
 						return e
 					}
+					if e = tx.Model(&Action{}).Where("token = ?", button.Action).Update("expires", notification.ScheduledFor.Add(24*time.Hour)).Error; e != nil {
+						return e
+					}
 					text := "Мягкое напоминание: " + definition.Name + ". Откройте /start → Сегодня."
 					raw, e := json.Marshal(map[string]any{"chat_id": recipient.TelegramID, "text": text, "reply_markup": map[string]any{"inline_keyboard": [][]map[string]string{{{"text": button.Label, "callback_data": button.Action}}}}})
 					if e != nil {
@@ -141,10 +144,34 @@ func (b *Bot) Snooze(uid int64, id uint, d time.Duration) error {
 		if tx.First(&instance, "id = ? AND version = ? AND closed = ? AND pending = ?", row.InstanceID, row.Version, false, false).Error != nil {
 			return family.ErrDenied
 		}
-		return tx.Model(&row).Updates(map[string]any{"sent": false, "next": b.Now().Add(d), "scheduled_for": b.Now().Add(d), "attempts": 0}).Error
+		child := *b
+		child.DB = tx
+		child.Family = &family.Service{DB: tx}
+		button, e := child.button(uid, row.CircleID, fmt.Sprintf("snooze:%d", row.ID), "Через 30 минут")
+		if e != nil {
+			return e
+		}
+		var payload map[string]any
+		if json.Unmarshal([]byte(row.Payload), &payload) != nil {
+			return errors.New("invalid reminder payload")
+		}
+		payload["reply_markup"] = map[string]any{"inline_keyboard": [][]map[string]string{{{"text": button.Label, "callback_data": button.Action}}}}
+		raw, e := json.Marshal(payload)
+		if e != nil {
+			return e
+		}
+		return tx.Model(&row).Updates(map[string]any{"payload": string(raw), "sent": false, "next": b.Now().Add(d), "scheduled_for": b.Now().Add(d), "attempts": 0}).Error
 	})
 }
 func (b *Bot) noticeReady(row Delivery) (bool, error) {
+	if row.AttemptID != 0 {
+		var a task.Attempt
+		user, e := b.Family.Authorize(row.Viewer, row.CircleID)
+		if e != nil || b.DB.First(&a, "id = ? AND status = ?", row.AttemptID, "review").Error != nil || !task.CanReview(b.DB, a, row.CircleID, user.ID) {
+			return false, b.DB.Model(&row).Update("sent", true).Error
+		}
+	}
+
 	if row.InstanceID != 0 {
 		var instance task.Instance
 		if b.DB.First(&instance, "id = ? AND circle_id = ? AND version = ? AND closed = ? AND pending = ?", row.InstanceID, row.CircleID, row.Version, false, false).Error != nil {
@@ -250,4 +277,37 @@ func (b *Bot) restMessage(uid int64, text string) error {
 		return e
 	}
 	return b.home(uid, 0)
+}
+
+func (b *Bot) PlanReviews() error {
+	return b.DB.Transaction(func(tx *gorm.DB) error {
+		var rows []struct {
+			task.Attempt
+			CircleID int
+		}
+		if e := tx.Table("hq_attempts a").Select("a.*,i.circle_id").Joins("JOIN hq_task_instances i ON i.id = a.instance_id").Where("a.status = ?", "review").Scan(&rows).Error; e != nil {
+			return e
+		}
+		for _, row := range rows {
+			var recipients []struct {
+				TelegramID int64
+				UserID     int
+			}
+			if e := tx.Table("hq_identities").Select("hq_identities.telegram_id,hq_identities.user_id").Joins("JOIN user_circles ON user_circles.user_id = hq_identities.user_id").Where("circle_id = ? AND is_active = ?", row.CircleID, true).Scan(&recipients).Error; e != nil {
+				return e
+			}
+			for _, r := range recipients {
+				if !task.CanReview(tx, row.Attempt, row.CircleID, r.UserID) {
+					continue
+				}
+				key := fmt.Sprintf("review:%d:%d", row.ID, r.UserID)
+				raw, _ := json.Marshal(map[string]any{"chat_id": r.TelegramID, "text": "В доме появился отчёт на проверку. /start → Настройки → Отчёты."})
+				d := Delivery{AttemptID: row.ID, EventKey: &key, Viewer: r.TelegramID, CircleID: row.CircleID, Method: "sendMessage", Payload: string(raw), Notice: true, EventType: "on_pending_approval", Next: b.Now(), ScheduledFor: b.Now()}
+				if e := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&d).Error; e != nil {
+					return e
+				}
+			}
+		}
+		return nil
+	})
 }

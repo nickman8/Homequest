@@ -19,7 +19,7 @@ try{for(const width of [200,320,390])for(const theme of ['light','dark','custom'
  let changed:any;const step={data:{...data}};
  const result=await runWidget(html,{width,layout:true,theme:theme==='dark'?'dark':'light',...(theme==='custom'?{themeParams:{bg_color:'#edf4e8',text_color:'#183020',button_color:'#345a40'}}:{}),context:{canQuery:true,backgroundQuery:true,chatType:'private',viewer:{id:B,first_name:'B'}},data,gestures:[{kind:'tap',x:80,y:layout.height-201}],onRequest(request:any){changed=call(B,'',request.data);step.data.chatData=JSON.stringify(changed.state);return {result:null}},script:[step],probes:["document.getElementById('text').textContent"]});
  if(result.requests.length!==1)console.log(JSON.stringify({height:layout.height,gestures:result.gestures,diags:result.diags}));
- assert.deepEqual(result.diags,[]);assert.equal(result.requests.length,1);assert.equal(changed.balance,10);assert.ok(JSON.stringify(result.probes).includes('Пока нет доступных заданий'));
+ assert.deepEqual(result.diags,[]);assert.equal(result.requests.length,1);assert.equal(changed.balance,10);assert.equal(changed.week,10);assert.equal(changed.xp,10);assert.ok(JSON.stringify(result.probes).includes('Пока нет доступных заданий'));
  assert.equal(call(B,'',tasks.state.buttons[0].action,changed.update_id).balance,10);assert.equal(call(B,'',tasks.state.buttons[0].action).balance,10);
  console.log(`PASS E02 product handlers + SQLite + official renderer ${width}px ${theme}`);
 }}finally{fs.rmSync(tmp,{recursive:true,force:true})}

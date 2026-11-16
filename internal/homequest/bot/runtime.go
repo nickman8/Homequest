@@ -5,6 +5,8 @@ import (
 	"donetick.com/core/internal/homequest/widget"
 	"encoding/json"
 	"errors"
+	"gorm.io/gorm"
+	"sync"
 	"time"
 )
 
@@ -88,6 +90,12 @@ func (b *Bot) Run(ctx context.Context, api API, status func(string)) error {
 	if offset > 0 {
 		offset++
 	}
+	var cursor Cursor
+	if e := b.DB.First(&cursor, 1).Error; e == nil {
+		offset = cursor.Next
+	} else if !errors.Is(e, gorm.ErrRecordNotFound) {
+		return e
+	}
 	// Polling and the single durable-outbox worker are independent: an outbound
 	// timeout must never hold a widget query behind a queue of slow messages.
 	ctx, cancel := context.WithCancel(ctx)
@@ -95,6 +103,11 @@ func (b *Bot) Run(ctx context.Context, api API, status func(string)) error {
 	go func() {
 		for ctx.Err() == nil {
 			if e := b.PlanReminders(b.ReminderOffsets); e != nil {
+				workerDone <- e
+				cancel()
+				return
+			}
+			if e := b.PlanReviews(); e != nil {
 				workerDone <- e
 				cancel()
 				return
@@ -112,6 +125,24 @@ func (b *Bot) Run(ctx context.Context, api API, status func(string)) error {
 		workerDone <- nil
 	}()
 	defer func() { cancel(); <-workerDone }()
+
+	if e := b.DB.Model(&AIJob{}).Where("state = ?", "processing").Updates(map[string]any{"state": "failed", "text": "", "voice_id": "", "command": "", "candidates": ""}).Error; e != nil {
+		return e
+	}
+	aiDone := make(chan struct{})
+	go func() {
+		defer close(aiDone)
+		for ctx.Err() == nil {
+			if e := b.ProcessAI(ctx); e != nil {
+				status("assistant_worker_error")
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(500 * time.Millisecond):
+			}
+		}
+	}()
+	defer func() { cancel(); <-aiDone }()
 	failures := 0
 	for ctx.Err() == nil {
 		var updates []Update
@@ -141,16 +172,33 @@ func (b *Bot) Run(ctx context.Context, api API, status func(string)) error {
 		}
 		failures = 0
 		status("polling")
+
+		// Acknowledge the whole batch concurrently within a short deadline; a slow
+		// query must not consume the next query's 15-second response window.
+		var acknowledgements sync.WaitGroup
 		for _, update := range updates {
-			// Acknowledge quickly; state mutation and delivery are separate.
+			method := ""
+			payload := map[string]any{}
 			if update.Query != nil {
-				ackCtx, stop := context.WithTimeout(ctx, 2*time.Second)
-				_ = api.Call(ackCtx, "answerWidgetQuery", map[string]any{"widget_query_id": update.Query.ID}, nil)
-				stop()
+				method = "answerWidgetQuery"
+				payload["widget_query_id"] = update.Query.ID
 			}
 			if update.Callback != nil {
-				_ = api.Call(ctx, "answerCallbackQuery", map[string]any{"callback_query_id": update.Callback.ID}, nil)
+				method = "answerCallbackQuery"
+				payload["callback_query_id"] = update.Callback.ID
 			}
+			if method != "" {
+				acknowledgements.Add(1)
+				go func(method string, payload map[string]any) {
+					defer acknowledgements.Done()
+					ackCtx, stop := context.WithTimeout(ctx, 2*time.Second)
+					defer stop()
+					_ = api.Call(ackCtx, method, payload, nil)
+				}(method, payload)
+			}
+		}
+		acknowledgements.Wait()
+		for _, update := range updates {
 			if e = b.Handle(update); e != nil {
 				return errors.New("update transaction failed")
 			}

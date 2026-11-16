@@ -36,14 +36,17 @@ func (s *Service) Create(tg int64, circle int, name, description string, cost in
 	if strings.TrimSpace(name) == "" || len([]rune(name)) > 100 || len([]rune(description)) > 500 || cost < 1 || cost > 100000 {
 		return out, errors.New("Название до 100 символов; цена от 1 до 100000")
 	}
-	user, e := (&family.Service{DB: s.DB}).Authorize(tg, circle)
-	if e != nil {
-		return out, e
-	}
-	out = r.Reward{CircleID: circle, Name: name, Description: description, PointsCost: cost, IsActive: true, CreatedBy: user.ID}
-	return out, s.DB.Create(&out).Error
+	e := s.DB.Transaction(func(tx *gorm.DB) error {
+		user, e := (&family.Service{DB: tx}).Authorize(tg, circle)
+		if e != nil {
+			return e
+		}
+		out = r.Reward{CircleID: circle, Name: name, Description: description, PointsCost: cost, IsActive: true, CreatedBy: user.ID}
+		return tx.Create(&out).Error
+	})
+	return out, e
 }
-func (s *Service) Edit(tg int64, circle, id int, name string, cost int) error {
+func (s *Service) Edit(tg int64, circle, id int, name string, cost int, description ...string) error {
 	if strings.TrimSpace(name) == "" || len([]rune(name)) > 100 || cost < 1 || cost > 100000 {
 		return errors.New("Некорректное название или цена")
 	}
@@ -64,7 +67,14 @@ func (s *Service) Edit(tg int64, circle, id int, name string, cost int) error {
 		if reward.CreatedBy != user.ID && !home.Owner {
 			return family.ErrDenied
 		}
-		return tx.Model(&reward).Updates(map[string]any{"name": name, "points_cost": cost}).Error
+		updates := map[string]any{"name": name, "points_cost": cost}
+		if len(description) > 0 {
+			if len([]rune(description[0])) > 500 {
+				return errors.New("Описание до 500 символов")
+			}
+			updates["description"] = description[0]
+		}
+		return tx.Model(&reward).Updates(updates).Error
 	})
 }
 func (s *Service) List(tg int64, circle int) ([]r.Reward, error) {
@@ -210,7 +220,7 @@ func (s *Service) Requests(tg int64, circle int) ([]r.RewardRedemption, error) {
 		return nil, e
 	}
 	var rows []r.RewardRedemption
-	e := s.DB.Where("circle_id = ?", circle).Order("id DESC").Limit(100).Find(&rows).Error
+	e := s.DB.Where("circle_id = ?", circle).Order("id DESC").Find(&rows).Error
 	return rows, e
 }
 

@@ -102,3 +102,28 @@ func TestOldTaskActionAfterRuleChangeIsRejected(t *testing.T) {
 		t.Fatal("stale price action accepted")
 	}
 }
+
+func TestDialogueBackAndRestartState(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(t.TempDir()+"/dialogue.db"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	b, _ := New(db, "<p>Дом</p>", "test")
+	_ = b.Family.Start(900001, "A")
+	_ = b.message(900001, "/create")
+	_ = b.message(900001, "Дом")
+	restarted, _ := New(db, "<p>Дом</p>", "test")
+	state, _ := restarted.Family.Step(900001)
+	if state.Step != "timezone" {
+		t.Fatal("dialogue not durable")
+	}
+	if e := restarted.message(900001, "/back"); e != nil {
+		t.Fatal(e)
+	}
+	state, _ = restarted.Family.Step(900001)
+	if state.Step != "name" {
+		t.Fatal("back should return to name", state.Step)
+	}
+	_ = restarted.message(900001, "/start")
+	state, _ = restarted.Family.Step(900001)
+	if state.Step != "" {
+		t.Fatal("home retained hidden input mode")
+	}
+}

@@ -3,6 +3,7 @@ package bot
 
 import (
 	"crypto/rand"
+	"donetick.com/core/internal/homequest/assistant"
 	"donetick.com/core/internal/homequest/billing"
 	"donetick.com/core/internal/homequest/family"
 	"donetick.com/core/internal/homequest/reward"
@@ -29,7 +30,13 @@ type Chat struct {
 	ID   int64  `json:"id"`
 	Type string `json:"type"`
 }
+type Voice struct {
+	FileID   string `json:"file_id"`
+	Duration int    `json:"duration"`
+	Size     int    `json:"file_size"`
+}
 type Message struct {
+	Voice  *Voice `json:"voice,omitempty"`
 	From   Person `json:"from"`
 	Chat   Chat   `json:"chat"`
 	Text   string `json:"text"`
@@ -56,6 +63,13 @@ type Update struct {
 	Query    *Query    `json:"widget_query,omitempty"`
 	Callback *Callback `json:"callback_query,omitempty"`
 }
+type Cursor struct {
+	ID   int `gorm:"primaryKey;autoIncrement:false"`
+	Next int64
+}
+
+func (Cursor) TableName() string { return "hq_polling_cursor" }
+
 type Receipt struct {
 	ID int64 `gorm:"primaryKey;autoIncrement:false"`
 }
@@ -63,6 +77,7 @@ type Receipt struct {
 func (Receipt) TableName() string { return "hq_update_receipts" }
 
 type Delivery struct {
+	AttemptID    int
 	EventKey     *string `gorm:"uniqueIndex"`
 	InstanceID   int
 	Version      int
@@ -105,6 +120,11 @@ type Card struct {
 	Buttons []Button `json:"buttons"`
 }
 type Bot struct {
+	LLM             assistant.LLM
+	STT             assistant.STT
+	VoiceSource     VoiceSource
+	AIDailyLimit    int
+	AIPremiumLimit  int
 	BillingMode     string
 	ReminderOffsets []int
 	DB              *gorm.DB
@@ -134,7 +154,7 @@ func New(db *gorm.DB, html, username string) (*Bot, error) {
 	if _, e = billing.New(db, ""); e != nil {
 		return nil, e
 	}
-	e = db.AutoMigrate(&Receipt{}, &Delivery{}, &Action{}, &u.UserNotificationPreference{}, &RestPreference{})
+	e = db.AutoMigrate(&Receipt{}, &Cursor{}, &Delivery{}, &Action{}, &u.UserNotificationPreference{}, &RestPreference{}, &AIJob{}, &AIConsent{})
 	return &Bot{DB: db, Family: f, HTML: html, Username: username, Now: func() time.Time { return time.Now().UTC() }, ReminderOffsets: []int{-60, 0, 120}}, e
 }
 func (b *Bot) Handle(update Update) error {
@@ -146,6 +166,9 @@ func (b *Bot) Handle(update Update) error {
 		if r.RowsAffected == 0 {
 			return nil
 		}
+		if e := tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&Cursor{ID: 1, Next: update.ID + 1}).Error; e != nil {
+			return e
+		}
 		child := *b
 		child.DB = tx
 		child.Family = &family.Service{DB: tx}
@@ -153,13 +176,19 @@ func (b *Bot) Handle(update Update) error {
 			if q.Chat.Type != "private" || q.Chat.ID != q.From.ID {
 				return nil
 			}
-			return child.action(q.From.ID, q.Data, q.MessageID)
+			if e := child.action(q.From.ID, q.Data, q.MessageID); e != nil {
+				return e
+			}
+			return child.awardBadges(q.From.ID)
 		}
 		if q := update.Callback; q != nil {
 			if q.Message.Chat.Type != "private" || q.Message.Chat.ID != q.From.ID {
 				return nil
 			}
-			return child.action(q.From.ID, q.Data, 0)
+			if e := child.action(q.From.ID, q.Data, 0); e != nil {
+				return e
+			}
+			return child.awardBadges(q.From.ID)
 		}
 		if m := update.Message; m != nil {
 			if m.Chat.Type != "private" || m.Chat.ID != m.From.ID {
@@ -168,10 +197,22 @@ func (b *Bot) Handle(update Update) error {
 			if e := child.Family.Start(m.From.ID, m.From.Name); e != nil {
 				return e
 			}
-			if len(m.Photos) > 0 {
-				return child.photo(m.From.ID, m.Photos[len(m.Photos)-1].FileID)
+			if m.Voice != nil {
+				if m.Voice.Duration > 60 || m.Voice.Size > 4<<20 {
+					return child.say(m.From.ID, "Пришлите голосовое до 60 секунд и 4 МБ.")
+				}
+				return child.enqueueAI(m.From.ID, "", m.Voice.FileID)
 			}
-			return child.message(m.From.ID, m.Text)
+			if len(m.Photos) > 0 {
+				if e := child.photo(m.From.ID, m.Photos[len(m.Photos)-1].FileID); e != nil {
+					return e
+				}
+				return child.awardBadges(m.From.ID)
+			}
+			if e := child.message(m.From.ID, m.Text); e != nil {
+				return e
+			}
+			return child.awardBadges(m.From.ID)
 		}
 		return nil
 	})
@@ -193,7 +234,23 @@ func (b *Bot) queue(method string, p any) error {
 	return b.DB.Create(&d).Error
 }
 func (b *Bot) say(uid int64, text string) error {
-	return b.queue("sendMessage", map[string]any{"chat_id": uid, "text": text})
+	payload := map[string]any{"chat_id": uid, "text": text}
+	if state, e := b.Family.Step(uid); e == nil && state.Step != "" {
+		circle := 0
+		if h, e := b.Family.Current(uid); e == nil {
+			circle = h.ID
+		}
+		back, e := b.button(uid, circle, "dialog_back", "Назад")
+		if e != nil {
+			return e
+		}
+		cancel, e := b.button(uid, circle, "dialog_cancel", "Отмена")
+		if e != nil {
+			return e
+		}
+		payload["reply_markup"] = map[string]any{"inline_keyboard": [][]map[string]string{{{"text": back.Label, "callback_data": back.Action}, {"text": cancel.Label, "callback_data": cancel.Action}}}}
+	}
+	return b.queue("sendMessage", payload)
 }
 func (b *Bot) button(uid int64, circle int, kind, label string) (Button, error) {
 	buf := make([]byte, 16)
@@ -204,7 +261,7 @@ func (b *Bot) button(uid int64, circle int, kind, label string) (Button, error) 
 	parts := strings.Split(kind, ":")
 	if len(parts) > 1 {
 		switch parts[0] {
-		case "done", "photo_submit", "options", "rules", "configure", "schedule", "task_manage", "pause", "resume", "cancel_task", "cancel_confirm", "edit_task", "due", "assign", "assignee":
+		case "reviewer", "reviewers", "done", "photo_submit", "options", "rules", "configure", "schedule", "task_manage", "pause", "resume", "cancel_task", "cancel_confirm", "edit_task", "due", "assign", "assignee":
 			id, e := strconv.Atoi(parts[1])
 			if e != nil {
 				return Button{}, e
@@ -258,6 +315,24 @@ func (b *Bot) message(uid int64, text string) error {
 	if len(text) > 4096 {
 		return b.say(uid, "Сообщение слишком длинное")
 	}
+	if text == "/back" {
+		state, e := b.Family.Step(uid)
+		if e != nil {
+			return e
+		}
+		switch state.Step {
+		case "timezone":
+			if e = b.Family.SetStep(uid, "name", ""); e != nil {
+				return e
+			}
+			return b.say(uid, "Как назвать ваш дом?")
+		case "task_points":
+			if e = b.Family.SetStep(uid, "task_name", ""); e != nil {
+				return e
+			}
+			return b.say(uid, "Как называется задание?")
+		}
+	}
 	if text == "/cancel" || text == "/back" {
 		if e := b.Family.SetStep(uid, "", ""); e != nil {
 			return e
@@ -271,6 +346,9 @@ func (b *Bot) message(uid int64, text string) error {
 		return b.home(uid, 0)
 	}
 	if text == "/start" || text == "/home" {
+		if e := b.Family.SetStep(uid, "", ""); e != nil {
+			return e
+		}
 		return b.home(uid, 0)
 	}
 	if text == "/create" {
@@ -355,7 +433,7 @@ func (b *Bot) message(uid int64, text string) error {
 		}
 		return b.home(uid, 0)
 	default:
-		return b.say(uid, "Откройте /start. Задания доступны кнопками. Голосовой помощник пока недоступен.")
+		return b.enqueueAI(uid, text, "")
 	}
 }
 func (b *Bot) action(uid int64, token string, msg int64) error {
@@ -391,6 +469,9 @@ func (b *Bot) action(uid int64, token string, msg int64) error {
 		}
 		return b.submitted(uid, msg, a.CircleID, attempt)
 	}
+	if handled, e := b.aiAction(uid, msg, a); handled {
+		return e
+	}
 	if handled, e := b.wishAction(uid, msg, a); handled {
 		return e
 	}
@@ -409,6 +490,10 @@ func (b *Bot) action(uid int64, token string, msg int64) error {
 		return b.tasks(uid, msg, page)
 	}
 	switch a.Kind {
+	case "dialog_back":
+		return b.message(uid, "/back")
+	case "dialog_cancel":
+		return b.message(uid, "/cancel")
 	case "new_task":
 		return b.message(uid, "/task")
 	case "tasks":

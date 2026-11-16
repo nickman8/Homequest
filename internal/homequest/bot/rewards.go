@@ -56,7 +56,11 @@ func (b *Bot) rewardMessage(uid int64, step, draft, text string) error {
 		if err != nil {
 			return err
 		}
-		e = s.Edit(uid, home.ID, id, name, cost)
+		if len(parts) == 3 {
+			e = s.Edit(uid, home.ID, id, name, cost, strings.TrimSpace(parts[2]))
+		} else {
+			e = s.Edit(uid, home.ID, id, name, cost)
+		}
 	}
 	if e != nil {
 		return b.say(uid, e.Error())

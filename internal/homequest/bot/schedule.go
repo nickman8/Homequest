@@ -106,15 +106,21 @@ func (b *Bot) editTaskMessage(uid int64, step, draft, text string) error {
 	if step == "task_due" {
 		e = s.SetDue(uid, h.ID, id, text)
 	} else {
-		parts := strings.SplitN(text, "|", 2)
-		if len(parts) != 2 {
+		parts := strings.SplitN(text, "|", 3)
+		if len(parts) < 2 {
 			return b.say(uid, "Пример: 10 | Вынести мусор")
 		}
 		points, err := strconv.Atoi(strings.TrimSpace(parts[0]))
 		if err != nil {
 			return b.say(uid, "Баллы должны быть целым числом")
 		}
+		if len(parts) == 3 && len([]rune(parts[2])) > 1000 {
+			return b.say(uid, "Описание до 1000 символов")
+		}
 		e = s.Edit(uid, h.ID, id, strings.TrimSpace(parts[1]), points)
+		if e == nil && len(parts) == 3 {
+			e = s.SetDescription(uid, h.ID, id, strings.TrimSpace(parts[2]))
+		}
 	}
 	if e != nil {
 		return b.say(uid, e.Error())

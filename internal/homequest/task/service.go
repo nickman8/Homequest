@@ -24,6 +24,9 @@ type Instance struct {
 func (Instance) TableName() string { return "hq_task_instances" }
 
 type Attempt struct {
+	ReviewerID   *int
+	ReviewedBy   *int
+	ReviewedAt   *time.Time
 	ID           int  `gorm:"primaryKey"`
 	InstanceID   int  `gorm:"index"`
 	HistoryID    int  `gorm:"uniqueIndex"`
@@ -127,7 +130,7 @@ func (s *Service) List(tg int64, circle int) ([]Item, error) {
 		return nil, e
 	}
 	var rows []Item
-	e := s.DB.Table("hq_task_instances i").Select("i.id, i.due_at, chores.name, chores.points, chores.assigned_to, chores.status, i.closed").Joins("JOIN chores ON chores.id = i.chore_id").Where("i.circle_id = ? AND chores.circle_id = ? AND i.closed = ? AND i.pending = ? AND chores.is_active = ?", circle, circle, false, false, true).Order("i.id").Limit(100).Scan(&rows).Error
+	e := s.DB.Table("hq_task_instances i").Select("i.id, i.due_at, chores.name, chores.points, chores.assigned_to, chores.status, i.closed").Joins("JOIN chores ON chores.id = i.chore_id").Where("i.circle_id = ? AND chores.circle_id = ? AND i.closed = ? AND i.pending = ? AND chores.is_active = ?", circle, circle, false, false, true).Order("i.id").Scan(&rows).Error
 	return rows, e
 }
 func (s *Service) Complete(tg int64, circle, id int, now time.Time) (Item, error) {
@@ -236,4 +239,54 @@ func (s *Service) Manage(tg int64, circle, id int, action string, target int) er
 		}
 		return tx.Model(&instance).Update("version", gorm.Expr("version + 1")).Error
 	})
+}
+
+func (s *Service) SetDescription(tg int64, circle, id int, text string) error {
+	if len([]rune(text)) > 1000 {
+		return errors.New("Описание до 1000 символов")
+	}
+	return s.DB.Transaction(func(tx *gorm.DB) error {
+		f := &family.Service{DB: tx}
+		user, e := f.Authorize(tg, circle)
+		if e != nil {
+			return e
+		}
+		home, e := f.View(tg, circle)
+		if e != nil {
+			return e
+		}
+		var i Instance
+		if tx.First(&i, "id = ? AND circle_id = ?", id, circle).Error != nil {
+			return family.ErrDenied
+		}
+		var definition ch.Chore
+		if tx.First(&definition, i.ChoreID).Error != nil {
+			return family.ErrDenied
+		}
+		if definition.CreatedBy != user.ID && !home.Owner {
+			return family.ErrDenied
+		}
+		if e = tx.Model(&definition).Update("description", text).Error; e != nil {
+			return e
+		}
+		return tx.Model(&i).Update("version", gorm.Expr("version + 1")).Error
+	})
+}
+func (s *Service) Details(tg int64, circle, id int) (string, error) {
+	if _, e := (&family.Service{DB: s.DB}).Authorize(tg, circle); e != nil {
+		return "", e
+	}
+	var i Instance
+	if s.DB.First(&i, "id = ? AND circle_id = ?", id, circle).Error != nil {
+		return "", family.ErrDenied
+	}
+	var definition ch.Chore
+	if s.DB.First(&definition, i.ChoreID).Error != nil {
+		return "", family.ErrDenied
+	}
+	text := definition.Name
+	if definition.Description != nil {
+		text += "\n" + *definition.Description
+	}
+	return text, nil
 }

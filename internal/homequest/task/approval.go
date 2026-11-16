@@ -14,6 +14,7 @@ import (
 )
 
 type Rule struct {
+	ReviewerID    *int
 	ChoreID       int `gorm:"primaryKey;autoIncrement:false"`
 	PhotoRequired bool
 }
@@ -47,7 +48,7 @@ func (s *Service) Configure(tg int64, circle, id int, approval, photo bool) erro
 		if e = tx.Model(&chore).Update("require_approval", approval).Error; e != nil {
 			return e
 		}
-		if e = tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&Rule{ChoreID: chore.ID, PhotoRequired: photo}).Error; e != nil {
+		if e = tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "chore_id"}}, DoUpdates: clause.Assignments(map[string]any{"photo_required": photo})}).Create(&Rule{ChoreID: chore.ID, PhotoRequired: photo}).Error; e != nil {
 			return e
 		}
 		return tx.Model(&instance).Update("version", gorm.Expr("version + 1")).Error
@@ -102,6 +103,10 @@ func (s *Service) Submit(tg int64, circle, id int, photo string, now time.Time) 
 		out = Attempt{InstanceID: id, HistoryID: history.ID, UserID: user.ID, PhotoID: photo, Approval: chore.RequireApproval, Status: "review"}
 		var rule Rule
 		_ = tx.First(&rule, "chore_id = ?", chore.ID).Error
+		out.ReviewerID = rule.ReviewerID
+		if out.Approval && out.ReviewerID != nil && *out.ReviewerID == user.ID {
+			return errors.New("Назначенный проверяющий не может подтвердить собственное выполнение")
+		}
 		if rule.PhotoRequired && photo == "" {
 			out.Status = "photo"
 		}
@@ -214,7 +219,7 @@ func (s *Service) Review(tg int64, circle, id int, approve bool, now time.Time) 
 		if e != nil {
 			return e
 		}
-		if user == a.UserID || !a.Approval {
+		if !CanReview(tx, a, circle, user) {
 			return family.ErrDenied
 		}
 		if a.Status == "accepted" && approve || a.Status == "rejected" && !approve {
@@ -222,6 +227,9 @@ func (s *Service) Review(tg int64, circle, id int, approve bool, now time.Time) 
 		}
 		if a.Status != "review" {
 			return family.ErrDenied
+		}
+		if e = tx.Model(&a).Updates(map[string]any{"reviewed_by": user, "reviewed_at": now.UTC()}).Error; e != nil {
+			return e
 		}
 		if approve {
 			return accept(tx, &a, &i, now)
@@ -322,5 +330,60 @@ func (s *Service) Undo(tg int64, circle, id int, now time.Time) error {
 			return e
 		}
 		return tx.Model(&ch.Chore{}).Where("id = ?", i.ChoreID).Updates(map[string]any{"is_active": true, "next_due_date": i.DueAt}).Error
+	})
+}
+
+// If a designated reviewer leaves the family, any other current adult may
+// review. The performer still cannot approve their own work.
+func CanReview(db *gorm.DB, a Attempt, circle, user int) bool {
+	if user == a.UserID || !a.Approval {
+		return false
+	}
+	if a.ReviewerID == nil || *a.ReviewerID == user {
+		return true
+	}
+	var count int64
+	if db.Model(&c.UserCircle{}).Where("circle_id = ? AND user_id = ? AND is_active = ?", circle, *a.ReviewerID, true).Count(&count).Error != nil {
+		return false
+	}
+	return count == 0
+}
+func (s *Service) SetReviewer(tg int64, circle, id, target int) error {
+	return s.DB.Transaction(func(tx *gorm.DB) error {
+		f := &family.Service{DB: tx}
+		user, e := f.Authorize(tg, circle)
+		if e != nil {
+			return e
+		}
+		home, e := f.View(tg, circle)
+		if e != nil {
+			return e
+		}
+		var i Instance
+		if tx.First(&i, "id = ? AND circle_id = ? AND closed = ? AND pending = ?", id, circle, false, false).Error != nil {
+			return family.ErrDenied
+		}
+		var chore ch.Chore
+		if tx.First(&chore, i.ChoreID).Error != nil {
+			return family.ErrDenied
+		}
+		if chore.CreatedBy != user.ID && !home.Owner {
+			return family.ErrDenied
+		}
+		var reviewer *int
+		if target != 0 {
+			var m c.UserCircle
+			if tx.First(&m, "user_id = ? AND circle_id = ? AND is_active = ?", target, circle, true).Error != nil {
+				return family.ErrDenied
+			}
+			if chore.AssignedTo != nil && *chore.AssignedTo == target {
+				return errors.New("Исполнитель и проверяющий должны быть разными")
+			}
+			reviewer = &target
+		}
+		if e = tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "chore_id"}}, DoUpdates: clause.Assignments(map[string]any{"reviewer_id": reviewer})}).Create(&Rule{ChoreID: chore.ID, ReviewerID: reviewer}).Error; e != nil {
+			return e
+		}
+		return tx.Model(&i).Update("version", gorm.Expr("version + 1")).Error
 	})
 }

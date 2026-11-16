@@ -120,3 +120,81 @@ func TestLegacyAttemptMigration(t *testing.T) {
 		t.Fatal("legacy unique index survived", e)
 	}
 }
+
+func TestDesignatedReviewerAndDeparture(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(t.TempDir()+"/reviewer.db"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	f, _ := family.New(db)
+	s, _ := New(db)
+	for _, uid := range []int64{900001, 900002, 900003} {
+		_ = f.Start(uid, "Тест")
+	}
+	h, _ := f.Create(900001, "Дом", "UTC")
+	now := time.Now()
+	token, _ := f.Invite(900001, now)
+	_ = f.Join(900002, token, now)
+	_ = f.Join(900003, token, now)
+	reviewer, _ := f.Authorize(900003, h.ID)
+	item, _ := s.Create(900001, h.ID, "Пыль", 10, nil)
+	_ = s.Configure(900001, h.ID, item.ID, true, false)
+	if e := s.SetReviewer(900001, h.ID, item.ID, reviewer.ID); e != nil {
+		t.Fatal(e)
+	}
+	a, e := s.Submit(900002, h.ID, item.ID, "", now)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = s.Review(900001, h.ID, a.ID, true, now); e == nil {
+		t.Fatal("ignored designated reviewer")
+	}
+	if e = f.Leave(900003); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.Review(900003, h.ID, a.ID, true, now); e == nil {
+		t.Fatal("departed reviewer")
+	}
+	if e = s.Review(900002, h.ID, a.ID, true, now); e == nil {
+		t.Fatal("self approval fallback")
+	}
+	if e = s.Review(900001, h.ID, a.ID, true, now); e != nil {
+		t.Fatal(e)
+	}
+	db.First(&a, a.ID)
+	if a.ReviewedBy == nil || a.ReviewedAt == nil {
+		t.Fatal("missing review audit")
+	}
+}
+
+func TestConcurrentApproveRejectIsSingleDecision(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(t.TempDir()+"/race.db"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	sql, _ := db.DB()
+	sql.SetMaxOpenConns(1)
+	f, _ := family.New(db)
+	s, _ := New(db)
+	_ = f.Start(900001, "A")
+	_ = f.Start(900002, "B")
+	h, _ := f.Create(900001, "Дом", "UTC")
+	now := time.Now()
+	token, _ := f.Invite(900001, now)
+	_ = f.Join(900002, token, now)
+	item, _ := s.Create(900001, h.ID, "Посуда", 10, nil)
+	_ = s.Configure(900001, h.ID, item.ID, true, false)
+	a, _ := s.Submit(900002, h.ID, item.ID, "", now)
+	results := make(chan error, 2)
+	for _, approve := range []bool{true, false} {
+		go func(v bool) { results <- s.Review(900001, h.ID, a.ID, v, now) }(approve)
+	}
+	successes := 0
+	for i := 0; i < 2; i++ {
+		if <-results == nil {
+			successes++
+		}
+	}
+	if successes != 1 {
+		t.Fatal("conflicting decisions", successes)
+	}
+	db.First(&a, a.ID)
+	balance, _ := s.Balance(900002, h.ID)
+	if (a.Status == "accepted" && balance != 10) || (a.Status == "rejected" && balance != 0) {
+		t.Fatal(a.Status, balance)
+	}
+}

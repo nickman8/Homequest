@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"donetick.com/core/internal/homequest/assistant"
 	"donetick.com/core/internal/homequest/bot"
 	"donetick.com/core/internal/homequest/widget"
 	"encoding/json"
@@ -87,6 +88,38 @@ func run() error {
 	if e != nil {
 		return errors.New("migration failed")
 	}
+
+	config := func(name string) string {
+		if v := os.Getenv(name); v != "" {
+			return v
+		}
+		return secret[name]
+	}
+	llmStatus := "model_not_verified"
+	if model := config("NICKLLM_MODEL"); model != "" && config("NICKLLM_API_KEY") != "" {
+		app.LLM = &assistant.NickLLM{Key: config("NICKLLM_API_KEY"), Model: model}
+		llmStatus = "configured_unverified"
+	}
+	sttStatus := "not_configured"
+	if python := config("STT_PYTHON"); python != "" {
+		if _, e := os.Stat(python); e != nil {
+			return errors.New("STT Python unavailable")
+		}
+		app.STT = &assistant.FasterWhisper{Python: python, Script: "scripts/transcribe.py", TempDir: dir}
+		app.VoiceSource = api
+		sttStatus = "configured"
+	}
+	app.AIDailyLimit = 100
+	app.AIPremiumLimit = 500
+	for name, target := range map[string]*int{"AI_DAILY_LIMIT": &app.AIDailyLimit, "AI_PREMIUM_DAILY_LIMIT": &app.AIPremiumLimit} {
+		if v := config(name); v != "" {
+			n, e := strconv.Atoi(v)
+			if e != nil || n < 1 {
+				return errors.New("invalid AI limit")
+			}
+			*target = n
+		}
+	}
 	app.BillingMode = os.Getenv("BILLING_MODE")
 	if app.BillingMode == "" {
 		app.BillingMode = "manual_test"
@@ -115,7 +148,7 @@ func run() error {
 			_, _ = w.Write([]byte(`{"database":"unavailable"}`))
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"database": "ready", "telegram": state.Load(), "llm": "not_configured", "stt": "not_configured", "scheduler": "polling_worker"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"database": "ready", "telegram": state.Load(), "llm": llmStatus, "stt": sttStatus, "scheduler": "polling_worker"})
 	})
 	addr := os.Getenv("HOMEQUEST_HEALTH_ADDR")
 	if addr == "" {

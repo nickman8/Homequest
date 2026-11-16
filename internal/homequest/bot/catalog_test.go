@@ -6,6 +6,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	"os"
 	"strings"
 	"testing"
 )
@@ -75,6 +76,11 @@ func TestCatalogsAndPremiumThroughUpdates(t *testing.T) {
 	say(900002, "/task")
 	say(900002, "Вынести мусор")
 	say(900002, "10")
+	click(900002, "options:1")
+	click(900002, "task_manage:1")
+	click(900002, "reviewers:1:0")
+	say(900002, "/start")
+	click(900002, "tasks")
 	click(900002, "done:1")
 	say(900002, "/start")
 	click(900002, "points")
@@ -91,4 +97,37 @@ func TestCatalogsAndPremiumThroughUpdates(t *testing.T) {
 	if e != nil || balance != 0 {
 		t.Fatal(balance, e)
 	}
+	say(900002, "/start")
+	click(900002, "points")
+	click(900002, "house")
+	click(900002, "history:0")
+	var badgeCount int64
+	db.Table("hq_badges").Where("code = ?", "first").Count(&badgeCount)
+	if badgeCount != 1 {
+		t.Fatal("achievement not awarded automatically", badgeCount)
+	}
+	if path := os.Getenv("HQ_WIDGET_CARDS_OUT"); path != "" {
+		var rows []Delivery
+		if e = db.Order("id").Find(&rows).Error; e != nil {
+			t.Fatal(e)
+		}
+		cards := map[string]Card{}
+		for _, row := range rows {
+			var payload map[string]any
+			_ = json.Unmarshal([]byte(row.Payload), &payload)
+			if raw, ok := payload["chat_data"].(string); ok {
+				var c Card
+				_ = json.Unmarshal([]byte(raw), &c)
+				cards[c.Title] = c
+			}
+		}
+		raw, e := json.Marshal(cards)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if e = os.WriteFile(path, raw, 0600); e != nil {
+			t.Fatal(e)
+		}
+	}
+
 }

@@ -3,6 +3,7 @@ package main
 
 import (
 	"donetick.com/core/internal/homequest/bot"
+	"donetick.com/core/internal/homequest/stats"
 	"donetick.com/core/internal/homequest/task"
 	"encoding/json"
 	"github.com/glebarez/sqlite"
@@ -61,10 +62,12 @@ func main() {
 		_ = json.Unmarshal([]byte(raw), &state)
 	}
 	balance := 0
+	var summary stats.Summary
 	var familyID int
 	if h, e := app.Family.Current(input.Viewer); e == nil {
 		familyID = h.ID
 		balance, _ = (&task.Service{DB: db}).Balance(input.Viewer, h.ID)
+		summary, _ = (&stats.Service{DB: db}).Summary(input.Viewer, h.ID, time.Now().UTC())
 	}
-	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"state": state, "payload": payload, "balance": balance, "family_id": familyID, "update_id": input.UpdateID, "at": time.Now().UTC()})
+	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"state": state, "payload": payload, "balance": balance, "week": summary.Week, "xp": summary.XP, "family_id": familyID, "update_id": input.UpdateID, "at": time.Now().UTC()})
 }

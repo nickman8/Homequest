@@ -98,3 +98,23 @@ stale task action после изменения цены, с красным → 
 Новые проверки: task late approval/DST/timezone; reminders fake clock/restart;
 reward concurrent spending/snapshots/refund; wishlist secret DTO/race;
 Premium mode/owner/persistence. Bot catalog test проходит через updates.
+
+## AI/STT адаптеры и реальная проверка
+
+faster-whisper 1.2.1 (PyPI), CTranslate2 4.9.0, PyAV **16.0.1**;
+полный Python lock в requirements-stt.lock. PyAV 19 оказался несовместим:
+`metadata_errors` удалён из `av.open`; реальный запуск это воспроизвёл.
+Многоязычная модель Systran/faster-whisper-small, Hugging Face revision
+`536b0662742c02347bc0e980a01041f333bce120`, CPU int8, 2 потока.
+Загрузка выполняется отдельно, runtime работает local_files_only.
+
+STT выполнен на локально синтезированном русском аудио (espeakng-loader 0.2.4,
+только инструмент проверки, не production dependency). Процесс прошёл, первый
+замер ~9.94 s / 1,048,704 KiB peak RSS. Качество короткой синтетической фразы
+не прошло смысловую проверку: была потеря/изменение времени глагола. Это НЕ
+подтверждение качества живого русского Telegram voice. Нужна человеческая запись.
+Аудио и временные файлы остаются вне Git; transient audio удаляется адаптером.
+
+NickLLM models повторно HTTP 403. Точный model ID не задан, live completion,
+structured-output capability и end-to-end voice с выбранной LLM не подтверждены.
+Адаптер не выбирает альтернативную модель; JSON строго валидируется локально.

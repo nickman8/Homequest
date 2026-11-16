@@ -1,73 +1,44 @@
-# Проверки
+# Проверки HomeQuest — 2026-11-16
 
-2026-11-16:
-- Неизменённый upstream: `go test ./...` PASS, 31 пакет с тестами; `go build` PASS.
-- Импортированный backend: `make build test` PASS (32 пакета с тестами).
-- `go test ./internal/homequest/widget`: PASS. До реализации тесты были красными
-  (отсутствовали NewClient/Validate/NewSpike). Байтовые лимиты кириллицы, редактирование
-  ошибок transport, другой viewer, истечение action, повторный запрос, реальная SQLite.
-- `npm run build:widgets`: PASS, 1392/813 bytes HTML/zlib9.
-- `tests/widget-harness.mts`: PASS, 9 комбинаций ширин 200/320/390 и light/dark/custom.
-  Настоящие QuickJS + validator + renderer с нажатием → Go CLI controlled transport →
-  SQLite → изменённый chatData → проверка текста в QuickJS. Это T02 spike, не E02.
-  Family scope и task effects в нём отсутствуют. Нет подставленного успешного результата.
-- Upstream миграции на пустой БД и повторном старте: PASS, health HTTP 200.
-- Live Telegram: только getMe/getWebhookInfo PASS; настоящая карточка/клик не проверены.
-- NickLLM: models HTTP 403; completion/structured outputs не проверены.
-- STT: не установлен; русское аудио не проверено. CI workflow подготовлен, remote run не подтверждён.
+Команды: `make test`, `make harness`; `go test -race ./internal/homequest/bot
+./internal/homequest/task ./internal/homequest/reward ./internal/homequest/wishlist`.
+В Cloud добавлять `GO=/workspace/toolchains/go/bin/go` в make. Все перечисленные
+unit/integration/Bot fixtures проходили. Последний запуск/версия — STATUS/RUNBOOK.
 
-| Сценарий | Тест продукта | Статус |
+| ID | Существующие проверки | Уровень / предел доказательства |
 |---|---|---|
-| E01 семья/вступление | отсутствует | Не реализован |
-| E02 выполнение | отсутствует; T02 spike не заменяет | Не реализован |
-| E03 фото/approval | отсутствует | Не реализован |
-| E04 повтор/DST | upstream baseline не доказывает accepted_at | Не реализован |
-| E05 reminders | upstream baseline не доказывает HomeQuest | Не реализован |
-| E06 награда/refund | upstream тесты; другие правила списания | Не реализован |
-| E07 секретная бронь | отсутствует | Не реализован |
-| E08 голос | отсутствует | Не реализован |
-| E09 AI draft | отсутствует | Не реализован |
-| E10 Premium | отсутствует | Не реализован |
-| E11 семейная изоляция | только viewer-bound probe | Не реализован |
-| E12 восстановление | только redaction transport | Не реализован |
-| E13 миграции/старые карточки | baseline миграции и размер одной карточки | Частично |
+| E01 | bot.TestE01ConversationAndReplay; family/service_test.go | Bot controlled transport + SQLite; A/B/C/D, приглашения/изоляция; часть invite setup через доменный сервис |
+| E02 | tests/bot-widget-e02.mts; task.TestCompletionRaceSnapshotAndAuthorization | Реальный HTML → официальный QuickJS/renderer gesture → Bot.Handle → SQLite → новый state; баланс/вклад/XP; 9 width/theme; race отдельно integration |
+| E03 | bot.TestE03PhotoApprovalThroughUpdates; task.TestPhotoApprovalSnapshotRejectAndUndo; TestConcurrentApproveRejectIsSingleDecision | Bot E2E controlled transport + integration; фото/approval/отказ/снимок/undo/гонка |
+| E04 | chore.TestHomeQuestLateAcceptanceAndDST; task.TestLateApprovalCreatesOnlyFutureInstance; TestTimezoneChangePreservesLocalScheduleAndInvalidatesCards; bot.TestScheduleDialogGrammar | Unit + SQLite + grammar; несколько пропущенных недель, DST, timezone. Полный bot→worker календарный E2E не собран |
+| E05 | bot.TestReminderPlanningRestartSnoozeAndInvalidation; TestQuietHoursAndVacation | SQLite/outbox с fake clock; отдельные quiet/vacation правила. Не настоящий Telegram delivery |
+| E06 | reward.TestRedemptionReservationRefundSnapshotAndUndo; bot.TestCatalogsAndPremiumThroughUpdates | Integration race/snapshot/refund/undo + product updates request→approve→deliver |
+| E07 | wishlist.TestSecretClaimsRaceIsolationAndDeparture; bot.TestCatalogsAndPremiumThroughUpdates | Concurrent claim, неизменный owner DTO, чужая семья, уход + UI flow. API отдельного сайта не существует |
+| E08 | assistant.TestSafeCommandValidation; bot.TestE08E09AIUpdatesVoiceDraftAndReplay | STT/LLM fixtures через очередь и product updates; отрицание/чужой ID/replay. Live speech/LLM НЕ доказаны |
+| E09 | тот же TestE08E09; assistant schema test | Черновик не создаёт instance до подтверждения, повтор кнопки без дубля; расписание во family timezone |
+| E10 | billing.TestManualEntitlementAuthorizationModeAndPersistence; bot.TestCatalogsAndPremiumThroughUpdates | Серверный mode/role/scope, expiry/revoke/restart + product buttons. Реальных payment методов нет |
+| E11 | family/service_test.go; task auth/photo tests; wishlist isolation; bot.TestOldTaskActionAfterRuleChangeIsRejected; task.TestDesignatedReviewerAndDeparture; assistant foreign ID | Unit/integration + отдельные bot stale actions; не единый полный adversarial E2E всех сущностей |
+| E12 | bot runtime_test.go; widget.TestTransportRedactsErrors; TestStatusIsStructuredWithoutDescription; assistant schema/fixtures | 429/backoff, 409 stop, slow send independent ack, dedup, JSON. Часть STT/LLM отказов не имеет отдельного end-to-end теста |
+| E13 | task.TestLegacyAttemptMigration; bot.TestDialogueBackAndRestartState; stale action test; tests/card-layouts.mts | Реальная SQLite migration, restart диалогов, старые версии; официальный renderer размеров/тем. Не покрывает все возможные старые БД |
 
-Первый импорт содержит исходные whitespace замечания Donetick (`git diff --check`
-на root commit). Upstream файлы ради форматирования не переписывались.
-Проверка новых файлов на whitespace и скан реальных переданных секретов — PASS.
+Upstream baseline: Donetick v0.1.86 до изменений запускался на пустой SQLite,
+повторный запуск успешен; `go test ./...` проходил. Новые проверки не скрывают
+baseline failures — их не обнаружено.
 
-## Новая проверка вертикальных сценариев
+Официальный harness: pinned SHA в REUSE; spike 9 layouts + E02 9 layouts;
+продуктовые карточки из настоящих handlers проверяются на 200px, state ≤1024,
+height ≤600; 3 обезличенных screenshots. E02 использует контролируемый host/API,
+но настоящий QuickJS, validator и renderer. Обычный browser mock не используется.
 
-- family/service_test.go: две семьи, expires/revoke, repeat join, owner leave, transfer,
-  removal, timezone, запрет неявного переключения дома — PASS.
-- task/service_test.go: concurrent completion, назначение, edit authorization — PASS.
-- task/approval_test.go: required photo, self-approval, snapshot, reject/resubmit,
-  duplicate approval/undo, foreign photo, migration предыдущей БД — PASS.
-- bot/bot_test.go: E01 через updates, duplicate receipt, чужой action, stale version — PASS.
-- bot/photo_test.go: E03 через updates с controlled transport — PASS.
-- bot/runtime_test.go: durable bounded retry/429, отсутствие повторной доставки после
-  успеха, 409 stop — PASS. Не полноценная проверка всех сетевых сбоев.
-- tests/bot-widget-e02.mts: официальный QuickJS/renderer → обычный bot handler → SQLite
-  → widget state; 9 тем/ширин — PASS. Проверены баланс и повтор; недельный вклад/XP пока нет.
+## Live smoke
 
-Предыдущая таблица фиксировала первоначальный checkpoint. E01/E03 теперь покрыты указанными
-путями; E02 покрыт в базовой части. E04–E10 (кроме фото-ветки), полные E11–E13 ещё не завершены.
-
-## Дополнительный запуск T06–T11 (2026-11-16)
-
-`go test ./...` PASS после добавления расписания, напоминаний, экономики,
-наград, wishlist и Premium. `make harness` PASS: 9 spike + 9 E02 layouts.
-
-| Требование | Существующая проверка | Уровень / результат |
-|---|---|---|
-| E04 accepted_at, позднее approval, DST | task.TestLateApprovalCreatesOnlyFutureInstance; chore homequest_schedule_test | unit + SQLite integration PASS |
-| E04 timezone / старые версии | task.TestTimezoneChangePreservesLocalScheduleAndInvalidatesCards | SQLite integration PASS |
-| E05 планирование, quiet/vacation/snooze, restart | bot/reminders_test.go | SQLite + fake clock PASS |
-| E06 снимки, гонка расхода/refund/undo | reward.TestRedemptionReservationRefundSnapshotAndUndo | integration PASS |
-| E07 бронь, автор/чужая семья/уход | wishlist.TestSecretClaimsRaceIsolationAndDeparture | integration PASS |
-| E10 режим, роль, persistence, expiry | billing.TestManualEntitlementAuthorizationModeAndPersistence | integration PASS |
-| E06/E07/E10 кнопки/диалоги | bot.TestCatalogsAndPremiumThroughUpdates | Bot E2E controlled transport PASS |
-| E12 медленный Telegram send не задерживает query ack | bot.TestSlowDeliveryDoesNotBlockWidgetAcknowledgement | controlled transport PASS |
-
-Live Widgets, живой русский голос и NickLLM completion не подтверждены.
-Полная матрица E01–E13 пока не закрыта; тест отдельного правила не равен полному E2E.
+- getMe/getWebhookInfo: HTTP 200, @Home_questbot, webhook отсутствует.
+- Polling и DB health проверены. Настоящий Telegram-клиент, карточка и callback
+  ожидают пользовательского `/start`; найденные чаты не использовались для рассылки.
+- NickLLM GET /v1/models: HTTP 403, model ID неизвестен. Completion/structured outputs
+  не проверены, другая модель не подставлена.
+- faster-whisper small CPU int8 реально загружен и запущен. Синтетическая русская
+  речь распознана с искажением смысла/времени глагола: качество **не принято**.
+  Первый замер 9.94 s, peak RSS 1,048,704 KiB. Живое человеческое voice ожидается.
+- При заблокированной LLM бот может показать только локальную транскрипцию;
+  это не считается завершением задания голосом и не меняет баллы.

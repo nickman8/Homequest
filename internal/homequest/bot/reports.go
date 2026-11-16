@@ -16,7 +16,7 @@ func (b *Bot) submitted(uid, msg int64, circle int, a task.Attempt) error {
 		}
 		return b.say(uid, "Пришлите фотографию отчёта обычным фото в этот чат. /cancel завершит диалог; отчёт останется в разделе «Отчёты».")
 	case "review":
-		if e := b.notifyReview(uid, circle); e != nil {
+		if e := b.PlanReviews(); e != nil {
 			return e
 		}
 		return b.card(uid, msg, "Ожидает подтверждения", "Баллы появятся после принятия другим участником.", circle, "reports", "Отчёты", "home", "Дом")
@@ -30,18 +30,6 @@ func (b *Bot) submitted(uid, msg int64, circle int, a task.Attempt) error {
 	default:
 		return b.home(uid, msg)
 	}
-}
-func (b *Bot) notifyReview(uid int64, circle int) error {
-	var rows []struct{ TelegramID int64 }
-	if e := b.DB.Table("hq_identities").Select("hq_identities.telegram_id").Joins("JOIN user_circles ON user_circles.user_id = hq_identities.user_id").Where("circle_id = ? AND is_active = ? AND telegram_id != ?", circle, true, uid).Scan(&rows).Error; e != nil {
-		return e
-	}
-	for _, row := range rows {
-		if e := b.notice(row.TelegramID, circle, "on_pending_approval", "В доме появился отчёт на проверку. Откройте /start → Настройки → Отчёты."); e != nil {
-			return e
-		}
-	}
-	return nil
 }
 func (b *Bot) photo(uid int64, file string) error {
 	id, e := b.Family.Step(uid)
@@ -95,6 +83,8 @@ func (b *Bot) reportAction(uid, msg int64, a Action) (bool, error) {
 		id = n
 	}
 	switch parts[0] {
+	case "history":
+		return true, b.history(uid, msg, a.CircleID, id)
 	case "ranking":
 		return true, b.ranking(uid, msg, a.CircleID, id)
 	case "badges":
@@ -102,7 +92,7 @@ func (b *Bot) reportAction(uid, msg int64, a Action) (bool, error) {
 	case "house":
 		return true, b.house(uid, msg, a.CircleID)
 	case "task_manage":
-		return true, b.card(uid, msg, "Изменить задание", "Автор или владелец может изменить правила будущих выполнений.", a.CircleID, fmt.Sprintf("edit_task:%d", id), "Название и баллы", fmt.Sprintf("assign:%d:0", id), "Исполнитель", fmt.Sprintf("due:%d", id), "Срок", fmt.Sprintf("task_state:%d", id), "Пауза / отмена", "tasks", "Назад")
+		return true, b.card(uid, msg, "Изменить задание", "Автор или владелец может изменить правила будущих выполнений.", a.CircleID, fmt.Sprintf("edit_task:%d", id), "Название и баллы", fmt.Sprintf("assign:%d:0", id), "Исполнитель", fmt.Sprintf("due:%d", id), "Срок", fmt.Sprintf("reviewers:%d:0", id), "Проверяющий", fmt.Sprintf("task_state:%d", id), "Пауза / отмена", "tasks", "Назад")
 	case "task_state":
 		return true, b.card(uid, msg, "Состояние задания", "Пауза остановит выполнение и напоминания.", a.CircleID, fmt.Sprintf("pause:%d", id), "Приостановить", fmt.Sprintf("resume:%d", id), "Продолжить", fmt.Sprintf("cancel_confirm:%d", id), "Отменить задание", "tasks", "Назад")
 	case "pause", "resume":
@@ -119,7 +109,7 @@ func (b *Bot) reportAction(uid, msg int64, a Action) (bool, error) {
 		return true, b.tasks(uid, msg, 0)
 	case "edit_task", "due":
 		step := "task_edit"
-		prompt := "Введите баллы и название: 10 | Вынести мусор. /cancel — отмена"
+		prompt := "Введите баллы и название: 10 | Вынести мусор | описание (необязательно). /cancel — отмена"
 		if parts[0] == "due" {
 			step = "task_due"
 			prompt = "Введите срок в часовом поясе дома: 2026-11-20 19:00, либо без срока. /cancel — отмена"
@@ -128,6 +118,25 @@ func (b *Bot) reportAction(uid, msg int64, a Action) (bool, error) {
 			return true, e
 		}
 		return true, b.say(uid, prompt)
+
+	case "reviewers":
+		page := 0
+		if len(parts) == 3 {
+			page, _ = strconv.Atoi(parts[2])
+		}
+		return true, b.reviewers(uid, msg, a.CircleID, id, page)
+	case "reviewer":
+		if len(parts) != 3 {
+			return true, b.home(uid, msg)
+		}
+		target, e := strconv.Atoi(parts[2])
+		if e != nil {
+			return true, e
+		}
+		if e = s.SetReviewer(uid, a.CircleID, id, target); e != nil {
+			return true, b.say(uid, e.Error())
+		}
+		return true, b.tasks(uid, msg, 0)
 	case "assign":
 		page := 0
 		if len(parts) == 3 {
@@ -184,8 +193,14 @@ func (b *Bot) reportAction(uid, msg int64, a Action) (bool, error) {
 			return true, b.say(uid, e.Error())
 		}
 		return true, b.members(uid, msg, a.CircleID, 0)
+	case "task_details":
+		text, e := s.Details(uid, a.CircleID, id)
+		if e != nil {
+			return true, b.say(uid, "Задание недоступно")
+		}
+		return true, b.say(uid, text)
 	case "options":
-		return true, b.card(uid, msg, "Параметры задания", "Правила может менять автор или владелец. Фото и подтверждение — независимые требования.", a.CircleID, fmt.Sprintf("rules:%d", id), "Правила", fmt.Sprintf("photo_submit:%d", id), "Выполнить с фото", fmt.Sprintf("schedule:%d", id), "Повторение", fmt.Sprintf("task_manage:%d", id), "Изменить", "tasks", "Назад")
+		return true, b.card(uid, msg, "Параметры задания", "Правила может менять автор или владелец. Фото и подтверждение — независимые требования.", a.CircleID, fmt.Sprintf("rules:%d", id), "Правила", fmt.Sprintf("photo_submit:%d", id), "Выполнить с фото", fmt.Sprintf("schedule:%d", id), "Повторение", fmt.Sprintf("task_manage:%d", id), "Изменить", fmt.Sprintf("task_details:%d", id), "Описание", "tasks", "Назад")
 	case "rules":
 		return true, b.card(uid, msg, "Правила выполнения", "Выберите требования. Для подтверждения нужен ещё один участник.", a.CircleID, fmt.Sprintf("configure:%d:none", id), "Без требований", fmt.Sprintf("configure:%d:photo", id), "Только фото", fmt.Sprintf("configure:%d:approval", id), "Подтверждение", fmt.Sprintf("configure:%d:both", id), "Фото и подтверждение")
 	case "configure":
@@ -227,9 +242,16 @@ func (b *Bot) reports(uid, msg int64, circle int) error {
 	if e != nil {
 		return e
 	}
+	var rows []task.Attempt
+	e = b.DB.Table("hq_attempts a").Select("a.*").Joins("JOIN hq_task_instances i ON i.id = a.instance_id").Where("i.circle_id = ? AND ((a.status = ? AND a.user_id = ?) OR (a.status = ? AND a.user_id != ?))", circle, "photo", user.ID, "review", user.ID).Order("a.id").Find(&rows).Error
 	var a task.Attempt
-	e = b.DB.Table("hq_attempts a").Select("a.*").Joins("JOIN hq_task_instances i ON i.id = a.instance_id").Where("i.circle_id = ? AND ((a.status = ? AND a.user_id = ?) OR (a.status = ? AND a.user_id != ?))", circle, "photo", user.ID, "review", user.ID).Order("a.id").First(&a).Error
-	if e != nil {
+	for _, row := range rows {
+		if row.Status == "photo" || task.CanReview(b.DB, row, circle, user.ID) {
+			a = row
+			break
+		}
+	}
+	if e != nil || a.ID == 0 {
 		return b.card(uid, msg, "Отчёты", "Сейчас нет отчётов, требующих вашего действия.", circle, "home", "Дом")
 	}
 	if a.Status == "photo" {
@@ -284,4 +306,16 @@ func (b *Bot) members(uid, msg int64, circle, page int) error {
 		opts = append(opts, fmt.Sprintf("member_manage:%d", m.ID), "Управление")
 	}
 	return b.card(uid, msg, string(name), fmt.Sprintf("%s · %d из %d", role, page+1, len(h.Members)), circle, opts...)
+}
+
+func (b *Bot) reviewers(uid, msg int64, circle, id, page int) error {
+	h, e := b.Family.View(uid, circle)
+	if e != nil {
+		return e
+	}
+	if page < 0 || page >= len(h.Members) {
+		page = 0
+	}
+	m := h.Members[page]
+	return b.card(uid, msg, "Кто проверяет?", short(m.Name, 40)+"\nЕсли проверяющий выйдет, принять сможет другой взрослый. Самопроверка запрещена.", circle, fmt.Sprintf("reviewer:%d:%d", id, m.ID), "Выбрать участника", fmt.Sprintf("reviewers:%d:%d", id, (page+1)%len(h.Members)), "Следующий", fmt.Sprintf("reviewer:%d:0", id), "Любой другой участник", "tasks", "Назад")
 }
