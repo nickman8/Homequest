@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func (b *Bot) submitted(uid, msg int64, circle int, a task.Attempt) error {
@@ -36,7 +37,7 @@ func (b *Bot) notifyReview(uid int64, circle int) error {
 		return e
 	}
 	for _, row := range rows {
-		if e := b.say(row.TelegramID, "В доме появился отчёт на проверку. Откройте /start → Настройки → Отчёты."); e != nil {
+		if e := b.notice(row.TelegramID, circle, "on_pending_approval", "В доме появился отчёт на проверку. Откройте /start → Настройки → Отчёты."); e != nil {
 			return e
 		}
 	}
@@ -94,6 +95,74 @@ func (b *Bot) reportAction(uid, msg int64, a Action) (bool, error) {
 		id = n
 	}
 	switch parts[0] {
+	case "ranking":
+		return true, b.ranking(uid, msg, a.CircleID, id)
+	case "badges":
+		return true, b.badges(uid, msg, a.CircleID)
+	case "house":
+		return true, b.house(uid, msg, a.CircleID)
+	case "task_manage":
+		return true, b.card(uid, msg, "Изменить задание", "Автор или владелец может изменить правила будущих выполнений.", a.CircleID, fmt.Sprintf("edit_task:%d", id), "Название и баллы", fmt.Sprintf("assign:%d:0", id), "Исполнитель", fmt.Sprintf("due:%d", id), "Срок", fmt.Sprintf("task_state:%d", id), "Пауза / отмена", "tasks", "Назад")
+	case "task_state":
+		return true, b.card(uid, msg, "Состояние задания", "Пауза остановит выполнение и напоминания.", a.CircleID, fmt.Sprintf("pause:%d", id), "Приостановить", fmt.Sprintf("resume:%d", id), "Продолжить", fmt.Sprintf("cancel_confirm:%d", id), "Отменить задание", "tasks", "Назад")
+	case "pause", "resume":
+		if e := s.Manage(uid, a.CircleID, id, parts[0], 0); e != nil {
+			return true, b.say(uid, e.Error())
+		}
+		return true, b.tasks(uid, msg, 0)
+	case "cancel_confirm":
+		return true, b.card(uid, msg, "Отменить задание?", "Общая история сохранится.", a.CircleID, fmt.Sprintf("cancel_task:%d", id), "Подтвердить отмену", "tasks", "Назад")
+	case "cancel_task":
+		if e := s.Manage(uid, a.CircleID, id, "cancel", 0); e != nil {
+			return true, b.say(uid, e.Error())
+		}
+		return true, b.tasks(uid, msg, 0)
+	case "edit_task", "due":
+		step := "task_edit"
+		prompt := "Введите баллы и название: 10 | Вынести мусор. /cancel — отмена"
+		if parts[0] == "due" {
+			step = "task_due"
+			prompt = "Введите срок в часовом поясе дома: 2026-11-20 19:00, либо без срока. /cancel — отмена"
+		}
+		if e := b.Family.SetStep(uid, step, strconv.Itoa(id)); e != nil {
+			return true, e
+		}
+		return true, b.say(uid, prompt)
+	case "assign":
+		page := 0
+		if len(parts) == 3 {
+			page, _ = strconv.Atoi(parts[2])
+		}
+		return true, b.assignees(uid, msg, a.CircleID, id, page)
+	case "assignee":
+		if len(parts) != 3 {
+			return true, b.home(uid, msg)
+		}
+		target, e := strconv.Atoi(parts[2])
+		if e != nil {
+			return true, e
+		}
+		if e = s.Manage(uid, a.CircleID, id, "assign", target); e != nil {
+			return true, b.say(uid, e.Error())
+		}
+		return true, b.tasks(uid, msg, 0)
+	case "snooze":
+		if e := b.Snooze(uid, uint(id), 30*time.Minute); e != nil {
+			return true, b.say(uid, "Это напоминание уже неактуально")
+		}
+		return true, b.say(uid, "Напомню через 30 минут. Срок задания не изменён.")
+	case "notifications":
+		return true, b.card(uid, msg, "Напоминания", "По умолчанию: за час, в срок и один мягкий повтор через 2 часа. Тихие часы 22–08.", a.CircleID, "rest", "Настроить", "home", "Дом")
+	case "rest":
+		if e := b.Family.SetStep(uid, "rest", ""); e != nil {
+			return true, e
+		}
+		return true, b.say(uid, "Введите: вкл 22 8 — напоминания с тихими часами; выкл — отключить; отпуск 7 — пауза на 7 дней. /cancel — отмена")
+	case "schedule":
+		if e := b.Family.SetStep(uid, "schedule", strconv.Itoa(id)); e != nil {
+			return true, e
+		}
+		return true, b.say(uid, "Введите расписание в часовом поясе дома:\nкаждый день 19:00\nвт,чт 19:00\nкаждые 3 дня 19:00\nпосле 3 дней — после принятия\nбез повтора\n/cancel — отмена")
 	case "timezone":
 		if e := b.Family.SetStep(uid, "change_timezone", ""); e != nil {
 			return true, e
@@ -116,7 +185,7 @@ func (b *Bot) reportAction(uid, msg int64, a Action) (bool, error) {
 		}
 		return true, b.members(uid, msg, a.CircleID, 0)
 	case "options":
-		return true, b.card(uid, msg, "Параметры задания", "Правила может менять автор или владелец. Фото и подтверждение — независимые требования.", a.CircleID, fmt.Sprintf("rules:%d", id), "Правила", fmt.Sprintf("photo_submit:%d", id), "Выполнить с фото", "tasks", "Назад")
+		return true, b.card(uid, msg, "Параметры задания", "Правила может менять автор или владелец. Фото и подтверждение — независимые требования.", a.CircleID, fmt.Sprintf("rules:%d", id), "Правила", fmt.Sprintf("photo_submit:%d", id), "Выполнить с фото", fmt.Sprintf("schedule:%d", id), "Повторение", fmt.Sprintf("task_manage:%d", id), "Изменить", "tasks", "Назад")
 	case "rules":
 		return true, b.card(uid, msg, "Правила выполнения", "Выберите требования. Для подтверждения нужен ещё один участник.", a.CircleID, fmt.Sprintf("configure:%d:none", id), "Без требований", fmt.Sprintf("configure:%d:photo", id), "Только фото", fmt.Sprintf("configure:%d:approval", id), "Подтверждение", fmt.Sprintf("configure:%d:both", id), "Фото и подтверждение")
 	case "configure":

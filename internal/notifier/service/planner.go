@@ -339,6 +339,11 @@ func calculateScheduledTime(baseTime time.Time, template *chModel.NotificationTe
 // assignedUser is who the chore is assigned to and is only used for the message wording; it
 // is nil for a chore assigned to "Anyone", where recipient is each circle member in turn.
 func generateNotificationsFromTemplate(chore *chModel.Chore, recipient *cModel.UserCircleDetail, assignedUser *cModel.UserCircleDetail, overrideTarget *int64) []*nModel.Notification {
+	return PlanTemplatesAt(chore, recipient, assignedUser, overrideTarget, time.Now().UTC())
+}
+
+// PlanTemplatesAt exposes the existing template planner with a controllable clock.
+func PlanTemplatesAt(chore *chModel.Chore, recipient *cModel.UserCircleDetail, assignedUser *cModel.UserCircleDetail, overrideTarget *int64, now time.Time) []*nModel.Notification {
 	if len(chore.NotificationMetadataV2.Templates) == 0 {
 		return nil // No templates to process
 	}
@@ -364,7 +369,7 @@ func generateNotificationsFromTemplate(chore *chModel.Chore, recipient *cModel.U
 			scheduledTime = *chore.NextDueDate
 		}
 		// don't schedule if the time already pass :
-		if scheduledTime.Before(time.Now().UTC()) {
+		if scheduledTime.Before(now) {
 			logging.FromContext(context.Background()).Debug("Skipping notification for template, scheduled time has passed", "scheduled_time", scheduledTime)
 			continue
 		}
@@ -373,7 +378,7 @@ func generateNotificationsFromTemplate(chore *chModel.Chore, recipient *cModel.U
 			ChoreID:      chore.ID,
 			IsSent:       false,
 			ScheduledFor: scheduledTime,
-			CreatedAt:    time.Now().UTC(),
+			CreatedAt:    now,
 			TypeID:       recipient.NotificationType,
 			UserID:       recipient.UserID,
 			CircleID:     recipient.CircleID,

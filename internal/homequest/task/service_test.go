@@ -78,3 +78,38 @@ func TestCompletionRaceSnapshotAndAuthorization(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestPauseCancelAndAssignment(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(t.TempDir()+"/manage.db"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	f, _ := family.New(db)
+	s, _ := New(db)
+	_ = f.Start(900001, "A")
+	_ = f.Start(900002, "B")
+	h, _ := f.Create(900001, "Дом", "UTC")
+	token, _ := f.Invite(900001, time.Now())
+	_ = f.Join(900002, token, time.Now())
+	item, _ := s.Create(900001, h.ID, "Задание", 10, nil)
+	b, _ := f.Authorize(900002, h.ID)
+	if e := s.Manage(900002, h.ID, item.ID, "pause", 0); e == nil {
+		t.Fatal("not author")
+	}
+	if e := s.Manage(900001, h.ID, item.ID, "pause", 0); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := s.Submit(900002, h.ID, item.ID, "", time.Now()); e == nil {
+		t.Fatal("paused completion")
+	}
+	_ = s.Manage(900001, h.ID, item.ID, "resume", 0)
+	if e := s.Manage(900001, h.ID, item.ID, "assign", b.ID); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := s.Submit(900001, h.ID, item.ID, "", time.Now()); e == nil {
+		t.Fatal("assigned to other")
+	}
+	if e := s.Manage(900001, h.ID, item.ID, "cancel", 0); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := s.Submit(900002, h.ID, item.ID, "", time.Now()); e == nil {
+		t.Fatal("cancelled reopened")
+	}
+}

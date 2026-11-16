@@ -1,6 +1,8 @@
 package task
 
 import (
+	"context"
+	scheduler "donetick.com/core/internal/chore"
 	ch "donetick.com/core/internal/chore/model"
 	c "donetick.com/core/internal/circle/model"
 	"donetick.com/core/internal/homequest/family"
@@ -78,7 +80,7 @@ func (s *Service) Submit(tg int64, circle, id int, photo string, now time.Time) 
 			}
 			return nil
 		}
-		if !chore.IsActive {
+		if !chore.IsActive || chore.Status == ch.ChoreStatusPaused {
 			return family.ErrDenied
 		}
 		r := tx.Model(&Instance{}).Where("id = ? AND pending = ? AND closed = ?", id, false, false).Update("pending", true)
@@ -93,7 +95,7 @@ func (s *Service) Submit(tg int64, circle, id int, photo string, now time.Time) 
 			points = *chore.Points
 		}
 		now = now.UTC()
-		history := ch.ChoreHistory{ChoreID: chore.ID, CompletedBy: user.ID, PerformedAt: &now, Points: &points, Status: ch.ChoreHistoryStatusPendingApproval}
+		history := ch.ChoreHistory{ChoreID: chore.ID, CompletedBy: user.ID, PerformedAt: &now, DueDate: instance.DueAt, Points: &points, Status: ch.ChoreHistoryStatusPendingApproval}
 		if e = tx.Create(&history).Error; e != nil {
 			return e
 		}
@@ -147,7 +149,20 @@ func accept(tx *gorm.DB, a *Attempt, i *Instance, now time.Time) error {
 	if e := tx.Model(i).Updates(map[string]any{"closed": true, "pending": false}).Error; e != nil {
 		return e
 	}
-	if e := tx.Model(&ch.Chore{}).Where("id = ?", i.ChoreID).Update("is_active", false).Error; e != nil {
+	var definition ch.Chore
+	if e := tx.First(&definition, i.ChoreID).Error; e != nil {
+		return e
+	}
+	next, e := scheduler.NextAfterAcceptance(context.Background(), &definition, now)
+	if e != nil {
+		return e
+	}
+	if next != nil {
+		if e = tx.Create(&Instance{ChoreID: i.ChoreID, CircleID: i.CircleID, DueAt: next, Version: 1}).Error; e != nil {
+			return e
+		}
+	}
+	if e = tx.Model(&definition).Updates(map[string]any{"is_active": next != nil, "next_due_date": next}).Error; e != nil {
 		return e
 	}
 	a.Status = "accepted"
@@ -263,6 +278,32 @@ func (s *Service) Undo(tg int64, circle, id int, now time.Time) error {
 		if balance < *history.Points {
 			return errors.New("Недостаточно свободных баллов для отмены")
 		}
+		var successors []Instance
+		if e = tx.Where("chore_id = ? AND id > ? AND closed = ?", i.ChoreID, i.ID, false).Find(&successors).Error; e != nil {
+			return e
+		}
+		for _, successor := range successors {
+			var n int64
+			if e = tx.Model(&Attempt{}).Where("instance_id = ?", successor.ID).Count(&n).Error; e != nil {
+				return e
+			}
+			if n > 0 {
+				return errors.New("Следующее повторение уже используется; обычная отмена недоступна")
+			}
+		}
+		// A later accepted occurrence also prevents reopening old history.
+		var later int64
+		if e = tx.Model(&Attempt{}).Joins("JOIN hq_task_instances i ON i.id = hq_attempts.instance_id").Where("i.chore_id = ? AND i.id > ? AND hq_attempts.status = ?", i.ChoreID, i.ID, "accepted").Count(&later).Error; e != nil {
+			return e
+		}
+		if later > 0 {
+			return errors.New("Следующее повторение уже принято")
+		}
+		for _, successor := range successors {
+			if e = tx.Model(&successor).Update("closed", true).Error; e != nil {
+				return e
+			}
+		}
 		refund := p.PointsHistory{Action: p.PointsHistoryActionRemove, Points: *history.Points, CreatedAt: now.UTC(), CreatedBy: user, UserID: user, CircleID: circle}
 		if e = tx.Create(&refund).Error; e != nil {
 			return e
@@ -277,9 +318,9 @@ func (s *Service) Undo(tg int64, circle, id int, now time.Time) error {
 		if e = tx.Model(&c.UserCircle{}).Where("user_id = ? AND circle_id = ?", user, circle).Update("points", gorm.Expr("points - ?", *history.Points)).Error; e != nil {
 			return e
 		}
-		if e = tx.Model(&i).Updates(map[string]any{"closed": false, "pending": false}).Error; e != nil {
+		if e = tx.Model(&i).Updates(map[string]any{"closed": false, "pending": false, "version": gorm.Expr("version + 1")}).Error; e != nil {
 			return e
 		}
-		return tx.Model(&ch.Chore{}).Where("id = ?", i.ChoreID).Update("is_active", true).Error
+		return tx.Model(&ch.Chore{}).Where("id = ?", i.ChoreID).Updates(map[string]any{"is_active": true, "next_due_date": i.DueAt}).Error
 	})
 }

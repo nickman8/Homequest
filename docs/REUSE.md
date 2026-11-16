@@ -75,3 +75,26 @@ SHA `8c3c39b5220f7fb0c53af5362863a2377f756279`.
 stale authorization, migrations и сохранения regression gates. Найден и исправлен
 stale task action после изменения цены, с красным → зелёным regression test.
 Официальный Telegram harness остаётся доказательством совместимости Widgets.
+
+## Дополнения T06–T11
+
+- Donetick `internal/chore/scheduler.go`: вызывается через `NextAfterAcceptance`;
+  calendar slots строго после accepted_at, один актуальный экземпляр, DST gap →
+  первая существующая минута, fold → ранний UTC. `planner.go` переиспользован через
+  `PlanTemplatesAt` с управляемыми часами; доставка в едином HomeQuest outbox.
+- Donetick Reward/RewardRedemption и PointsHistory используются напрямую. Списание
+  при запросе; снимок имени/цены upstream; новые статусы delivered/cancelled и
+  Receipt связывают идемпотентность, выдачу и компенсацию. Вторая экономика не создана.
+- cmintey/wishlist `ee56cb9635a96a594140a95d57bc3e37322a750b`: Prisma Item/ItemClaim
+  перенесены как Go/GORM структуры в `internal/homequest/wishlist/service.go`.
+  Исходные фрагменты и MIT LICENSE сохранены в `third_party/wishlist/`.
+  Исключены public claims, self claims, несколько сайтов/регистраций. Добавлены
+  circle scope, unique item claim и сериализация без claim для получателя.
+  Тесты гонки/секретности/ухода написаны для этих усиленных правил; они не являются
+  перенесённым upstream test suite.
+- Premium: небольшой новый entitlement module; интерфейс будущего провайдера,
+  режим manual_test проверяется на сервере. Живой Stars provider отсутствует.
+
+Новые проверки: task late approval/DST/timezone; reminders fake clock/restart;
+reward concurrent spending/snapshots/refund; wishlist secret DTO/race;
+Premium mode/owner/persistence. Bot catalog test проходит через updates.

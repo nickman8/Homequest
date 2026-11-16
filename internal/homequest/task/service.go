@@ -12,6 +12,7 @@ import (
 )
 
 type Instance struct {
+	DueAt    *time.Time
 	ID       int `gorm:"primaryKey"`
 	ChoreID  int `gorm:"index"`
 	CircleID int `gorm:"index"`
@@ -38,10 +39,13 @@ type Attempt struct {
 func (Attempt) TableName() string { return "hq_attempts" }
 
 type Item struct {
-	ID     int
-	Name   string
-	Points int
-	Closed bool
+	AssignedTo *int
+	Status     ch.Status
+	DueAt      *time.Time
+	ID         int
+	Name       string
+	Points     int
+	Closed     bool
 }
 type Service struct{ DB *gorm.DB }
 
@@ -113,7 +117,7 @@ func (s *Service) Create(tg int64, circle int, name string, points int, assigned
 		if e = tx.Create(&instance).Error; e != nil {
 			return e
 		}
-		out = Item{instance.ID, name, points, false}
+		out = Item{ID: instance.ID, Name: name, Points: points, Closed: false}
 		return nil
 	})
 	return out, e
@@ -123,7 +127,7 @@ func (s *Service) List(tg int64, circle int) ([]Item, error) {
 		return nil, e
 	}
 	var rows []Item
-	e := s.DB.Table("hq_task_instances i").Select("i.id, chores.name, chores.points, i.closed").Joins("JOIN chores ON chores.id = i.chore_id").Where("i.circle_id = ? AND chores.circle_id = ? AND i.closed = ? AND i.pending = ? AND chores.is_active = ?", circle, circle, false, false, true).Order("i.id").Limit(100).Scan(&rows).Error
+	e := s.DB.Table("hq_task_instances i").Select("i.id, i.due_at, chores.name, chores.points, chores.assigned_to, chores.status, i.closed").Joins("JOIN chores ON chores.id = i.chore_id").Where("i.circle_id = ? AND chores.circle_id = ? AND i.closed = ? AND i.pending = ? AND chores.is_active = ?", circle, circle, false, false, true).Order("i.id").Limit(100).Scan(&rows).Error
 	return rows, e
 }
 func (s *Service) Complete(tg int64, circle, id int, now time.Time) (Item, error) {
@@ -139,7 +143,7 @@ func (s *Service) Complete(tg int64, circle, id int, now time.Time) (Item, error
 	if chore.Points != nil {
 		points = *chore.Points
 	}
-	return Item{id, chore.Name, points, a.Status == "accepted"}, nil
+	return Item{ID: id, Name: chore.Name, Points: points, Closed: a.Status == "accepted"}, nil
 }
 
 func (s *Service) Balance(tg int64, circle int) (int, error) {
@@ -177,6 +181,57 @@ func (s *Service) Edit(tg int64, circle, id int, name string, points int) error 
 			return family.ErrDenied
 		}
 		if e = tx.Model(&chore).Updates(map[string]any{"name": name, "points": points}).Error; e != nil {
+			return e
+		}
+		return tx.Model(&instance).Update("version", gorm.Expr("version + 1")).Error
+	})
+}
+
+func (s *Service) Manage(tg int64, circle, id int, action string, target int) error {
+	return s.DB.Transaction(func(tx *gorm.DB) error {
+		f := &family.Service{DB: tx}
+		user, e := f.Authorize(tg, circle)
+		if e != nil {
+			return e
+		}
+		home, e := f.View(tg, circle)
+		if e != nil {
+			return e
+		}
+		var instance Instance
+		if tx.First(&instance, "id = ? AND circle_id = ? AND closed = ? AND pending = ?", id, circle, false, false).Error != nil {
+			return family.ErrDenied
+		}
+		var definition ch.Chore
+		if tx.First(&definition, instance.ChoreID).Error != nil {
+			return family.ErrDenied
+		}
+		if definition.CreatedBy != user.ID && !home.Owner {
+			return family.ErrDenied
+		}
+		switch action {
+		case "pause":
+			e = tx.Model(&definition).Update("status", ch.ChoreStatusPaused).Error
+		case "resume":
+			e = tx.Model(&definition).Update("status", ch.ChoreStatusNoStatus).Error
+		case "cancel":
+			if e = tx.Model(&definition).Update("is_active", false).Error; e == nil {
+				e = tx.Model(&instance).Update("closed", true).Error
+			}
+		case "assign":
+			var assigned *int
+			if target != 0 {
+				var m c.UserCircle
+				if tx.First(&m, "user_id = ? AND circle_id = ? AND is_active = ?", target, circle, true).Error != nil {
+					return family.ErrDenied
+				}
+				assigned = &target
+			}
+			e = tx.Model(&definition).Update("assigned_to", assigned).Error
+		default:
+			return errors.New("Неизвестное изменение задания")
+		}
+		if e != nil {
 			return e
 		}
 		return tx.Model(&instance).Update("version", gorm.Expr("version + 1")).Error

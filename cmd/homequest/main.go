@@ -14,6 +14,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -85,6 +87,24 @@ func run() error {
 	if e != nil {
 		return errors.New("migration failed")
 	}
+	app.BillingMode = os.Getenv("BILLING_MODE")
+	if app.BillingMode == "" {
+		app.BillingMode = "manual_test"
+	}
+	if value := os.Getenv("REMINDER_OFFSETS_MINUTES"); value != "" {
+		var offsets []int
+		for _, part := range strings.Split(value, ",") {
+			n, e := strconv.Atoi(strings.TrimSpace(part))
+			if e != nil || n < -10080 || n > 10080 {
+				return errors.New("invalid reminder offsets")
+			}
+			offsets = append(offsets, n)
+		}
+		if len(offsets) > 5 {
+			return errors.New("too many reminder offsets")
+		}
+		app.ReminderOffsets = offsets
+	}
 	var state atomic.Value
 	state.Store("starting")
 	mux := http.NewServeMux()
@@ -95,7 +115,7 @@ func run() error {
 			_, _ = w.Write([]byte(`{"database":"unavailable"}`))
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"database": "ready", "telegram": state.Load(), "llm": "not_configured", "stt": "not_configured", "scheduler": "not_implemented"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"database": "ready", "telegram": state.Load(), "llm": "not_configured", "stt": "not_configured", "scheduler": "polling_worker"})
 	})
 	addr := os.Getenv("HOMEQUEST_HEALTH_ADDR")
 	if addr == "" {

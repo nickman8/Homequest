@@ -52,3 +52,22 @@
 
 Предыдущая таблица фиксировала первоначальный checkpoint. E01/E03 теперь покрыты указанными
 путями; E02 покрыт в базовой части. E04–E10 (кроме фото-ветки), полные E11–E13 ещё не завершены.
+
+## Дополнительный запуск T06–T11 (2026-11-16)
+
+`go test ./...` PASS после добавления расписания, напоминаний, экономики,
+наград, wishlist и Premium. `make harness` PASS: 9 spike + 9 E02 layouts.
+
+| Требование | Существующая проверка | Уровень / результат |
+|---|---|---|
+| E04 accepted_at, позднее approval, DST | task.TestLateApprovalCreatesOnlyFutureInstance; chore homequest_schedule_test | unit + SQLite integration PASS |
+| E04 timezone / старые версии | task.TestTimezoneChangePreservesLocalScheduleAndInvalidatesCards | SQLite integration PASS |
+| E05 планирование, quiet/vacation/snooze, restart | bot/reminders_test.go | SQLite + fake clock PASS |
+| E06 снимки, гонка расхода/refund/undo | reward.TestRedemptionReservationRefundSnapshotAndUndo | integration PASS |
+| E07 бронь, автор/чужая семья/уход | wishlist.TestSecretClaimsRaceIsolationAndDeparture | integration PASS |
+| E10 режим, роль, persistence, expiry | billing.TestManualEntitlementAuthorizationModeAndPersistence | integration PASS |
+| E06/E07/E10 кнопки/диалоги | bot.TestCatalogsAndPremiumThroughUpdates | Bot E2E controlled transport PASS |
+| E12 медленный Telegram send не задерживает query ack | bot.TestSlowDeliveryDoesNotBlockWidgetAcknowledgement | controlled transport PASS |
+
+Live Widgets, живой русский голос и NickLLM completion не подтверждены.
+Полная матрица E01–E13 пока не закрыта; тест отдельного правила не равен полному E2E.

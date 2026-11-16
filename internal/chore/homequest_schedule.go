@@ -90,3 +90,8 @@ func resolveLocal(year int, month time.Month, day, hour, minute, second int, loc
 	}
 	return time.Time{}, errors.New("local calendar date has no valid future time")
 }
+
+// ResolveLocalTime uses the same DST policy for explicit task deadlines.
+func ResolveLocalTime(year int, month time.Month, day, hour, minute int, loc *time.Location) (time.Time, error) {
+	return resolveLocal(year, month, day, hour, minute, 0, loc)
+}

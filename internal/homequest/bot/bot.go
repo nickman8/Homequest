@@ -3,12 +3,16 @@ package bot
 
 import (
 	"crypto/rand"
+	"donetick.com/core/internal/homequest/billing"
 	"donetick.com/core/internal/homequest/family"
+	"donetick.com/core/internal/homequest/reward"
+	"donetick.com/core/internal/homequest/stats"
 	"donetick.com/core/internal/homequest/task"
 	"donetick.com/core/internal/homequest/widget"
+	"donetick.com/core/internal/homequest/wishlist"
+	u "donetick.com/core/internal/user/model"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -59,15 +63,21 @@ type Receipt struct {
 func (Receipt) TableName() string { return "hq_update_receipts" }
 
 type Delivery struct {
-	CircleID  int
-	Viewer    int64
-	ID        uint `gorm:"primaryKey"`
-	Method    string
-	Payload   string
-	Attempts  int
-	Sent      bool
-	Next      time.Time
-	CreatedAt time.Time
+	EventKey     *string `gorm:"uniqueIndex"`
+	InstanceID   int
+	Version      int
+	Notice       bool
+	EventType    string
+	ScheduledFor time.Time
+	CircleID     int
+	Viewer       int64
+	ID           uint `gorm:"primaryKey"`
+	Method       string
+	Payload      string
+	Attempts     int
+	Sent         bool
+	Next         time.Time
+	CreatedAt    time.Time
 }
 
 func (Delivery) TableName() string { return "hq_deliveries" }
@@ -95,11 +105,13 @@ type Card struct {
 	Buttons []Button `json:"buttons"`
 }
 type Bot struct {
-	DB       *gorm.DB
-	Family   *family.Service
-	HTML     string
-	Username string
-	Now      func() time.Time
+	BillingMode     string
+	ReminderOffsets []int
+	DB              *gorm.DB
+	Family          *family.Service
+	HTML            string
+	Username        string
+	Now             func() time.Time
 }
 
 func New(db *gorm.DB, html, username string) (*Bot, error) {
@@ -110,8 +122,20 @@ func New(db *gorm.DB, html, username string) (*Bot, error) {
 	if _, e = task.New(db); e != nil {
 		return nil, e
 	}
-	e = db.AutoMigrate(&Receipt{}, &Delivery{}, &Action{})
-	return &Bot{db, f, html, username, func() time.Time { return time.Now().UTC() }}, e
+	if _, e = stats.New(db); e != nil {
+		return nil, e
+	}
+	if _, e = reward.New(db); e != nil {
+		return nil, e
+	}
+	if _, e = wishlist.New(db); e != nil {
+		return nil, e
+	}
+	if _, e = billing.New(db, ""); e != nil {
+		return nil, e
+	}
+	e = db.AutoMigrate(&Receipt{}, &Delivery{}, &Action{}, &u.UserNotificationPreference{}, &RestPreference{})
+	return &Bot{DB: db, Family: f, HTML: html, Username: username, Now: func() time.Time { return time.Now().UTC() }, ReminderOffsets: []int{-60, 0, 120}}, e
 }
 func (b *Bot) Handle(update Update) error {
 	return b.DB.Transaction(func(tx *gorm.DB) error {
@@ -180,7 +204,7 @@ func (b *Bot) button(uid int64, circle int, kind, label string) (Button, error) 
 	parts := strings.Split(kind, ":")
 	if len(parts) > 1 {
 		switch parts[0] {
-		case "done", "photo_submit", "options", "rules", "configure":
+		case "done", "photo_submit", "options", "rules", "configure", "schedule", "task_manage", "pause", "resume", "cancel_task", "cancel_confirm", "edit_task", "due", "assign", "assignee":
 			id, e := strconv.Atoi(parts[1])
 			if e != nil {
 				return Button{}, e
@@ -226,7 +250,7 @@ func (b *Bot) home(uid, msg int64) error {
 	if e != nil {
 		return b.card(uid, msg, "Добро пожаловать домой", "Создайте дом или откройте приглашение близкого человека.", 0, "create", "Создать дом")
 	}
-	opts := []string{"tasks", "Сегодня", "new_task", "Добавить задание", "points", "Мои баллы", "settings", "Настройки"}
+	opts := []string{"tasks", "Сегодня", "new_task", "Добавить задание", "points", "Мои баллы", "wishes:0", "Подарки", "settings", "Настройки"}
 
 	return b.card(uid, msg, h.Name, fmt.Sprintf("Часовой пояс: %s\nУчастников: %d\nДела по дому — общий вклад в уют.", h.Timezone, len(h.Members)), h.ID, opts...)
 }
@@ -272,8 +296,18 @@ func (b *Bot) message(uid int64, text string) error {
 		return e
 	}
 	switch id.Step {
+	case "wish_new":
+		return b.wishMessage(uid, text)
+	case "reward_new", "reward_edit":
+		return b.rewardMessage(uid, id.Step, id.Draft, text)
+	case "task_edit", "task_due":
+		return b.editTaskMessage(uid, id.Step, id.Draft, text)
+	case "rest":
+		return b.restMessage(uid, text)
+	case "schedule":
+		return b.scheduleMessage(uid, id.Draft, text)
 	case "change_timezone":
-		if e = b.Family.SetTimezone(uid, strings.TrimSpace(text)); e != nil {
+		if e = (&task.Service{DB: b.DB}).ChangeTimezone(uid, strings.TrimSpace(text)); e != nil {
 			return b.say(uid, e.Error())
 		}
 		if e = b.Family.SetStep(uid, "", ""); e != nil {
@@ -321,7 +355,7 @@ func (b *Bot) message(uid int64, text string) error {
 		}
 		return b.home(uid, 0)
 	default:
-		return b.say(uid, "Откройте /start. Создание заданий и голосовой помощник ещё в разработке.")
+		return b.say(uid, "Откройте /start. Задания доступны кнопками. Голосовой помощник пока недоступен.")
 	}
 }
 func (b *Bot) action(uid int64, token string, msg int64) error {
@@ -357,6 +391,12 @@ func (b *Bot) action(uid int64, token string, msg int64) error {
 		}
 		return b.submitted(uid, msg, a.CircleID, attempt)
 	}
+	if handled, e := b.wishAction(uid, msg, a); handled {
+		return e
+	}
+	if handled, e := b.rewardAction(uid, msg, a); handled {
+		return e
+	}
 	if handled, e := b.reportAction(uid, msg, a); handled {
 		return e
 	}
@@ -374,11 +414,7 @@ func (b *Bot) action(uid int64, token string, msg int64) error {
 	case "tasks":
 		return b.tasks(uid, msg, 0)
 	case "points":
-		balance, e := (&task.Service{DB: b.DB}).Balance(uid, a.CircleID)
-		if e != nil {
-			return e
-		}
-		return b.card(uid, msg, "Мои баллы", fmt.Sprintf("Доступный баланс: %d\nНедельный вклад и опыт появятся в следующем обновлении.", balance), a.CircleID, "home", "Назад")
+		return b.points(uid, msg, a.CircleID)
 	case "home":
 		return b.home(uid, msg)
 	case "create":
@@ -391,18 +427,27 @@ func (b *Bot) action(uid int64, token string, msg int64) error {
 		return b.say(uid, "Приглашение действует 7 дней:\nhttps://t.me/"+b.Username+"?start=join_"+token)
 	case "members":
 		return b.members(uid, msg, a.CircleID, 0)
+	case "premium":
+		return b.premium(uid, msg, a.CircleID)
+	case "premium_on", "premium_off":
+		if e := (&billing.Service{DB: b.DB, Mode: b.BillingMode}).Manual(uid, a.CircleID, a.Kind == "premium_on", b.Now()); e != nil {
+			return b.say(uid, "Тестовый Premium доступен только владельцу в режиме manual_test")
+		}
+		return b.premium(uid, msg, a.CircleID)
+	case "premium_stats":
+		return b.premiumStats(uid, msg, a.CircleID)
 	case "settings":
 		h, e := b.Family.Current(uid)
 		if e != nil {
 			return e
 		}
-		opts := []string{"members", "Участники", "leave", "Выйти из дома", "reports", "Отчёты", "home", "Назад"}
+		opts := []string{"members", "Участники", "leave", "Выйти из дома", "reports", "Отчёты", "notifications", "Напоминания", "home", "Назад"}
 		if h.Owner {
-			opts = []string{"invite", "Пригласить", "members", "Участники", "manage", "Управление", "reports", "Отчёты", "home", "Назад"}
+			opts = []string{"invite", "Пригласить", "members", "Участники", "manage", "Управление", "reports", "Отчёты", "notifications", "Напоминания", "home", "Назад"}
 		}
 		return b.card(uid, msg, "Настройки", "Выход сохраняет общую историю дома.", h.ID, opts...)
 	case "manage":
-		return b.card(uid, msg, "Управление домом", "Приглашения можно отозвать в любой момент.", a.CircleID, "revoke", "Отозвать приглашения", "timezone", "Часовой пояс", "leave", "Выйти из дома", "home", "Назад")
+		return b.card(uid, msg, "Управление домом", "Приглашения можно отозвать в любой момент.", a.CircleID, "revoke", "Отозвать приглашения", "timezone", "Часовой пояс", "wish_cleanup", "Брони ушедших", "leave", "Выйти из дома", "home", "Назад")
 	case "revoke":
 		if e := b.Family.Revoke(uid); e != nil {
 			return b.say(uid, "Только владелец управляет приглашениями")
@@ -416,7 +461,7 @@ func (b *Bot) action(uid int64, token string, msg int64) error {
 		}
 		return b.home(uid, 0)
 	default:
-		return errors.New("unsupported action version")
+		return b.say(uid, "Карточка обновилась. Откройте /start для новой версии.")
 	}
 }
 
@@ -440,5 +485,21 @@ func (b *Bot) tasks(uid, msg int64, page int) error {
 	if len(name) > 60 {
 		name = append(name[:59], '…')
 	}
-	return b.card(uid, msg, string(name), fmt.Sprintf("%d баллов · Может выполнить любой\nЗадание %d из %d", item.Points, page+1, len(items)), h.ID, fmt.Sprintf("done:%d", item.ID), "Выполнено", fmt.Sprintf("page:%d", (page+1)%len(items)), "Следующее", fmt.Sprintf("options:%d", item.ID), "Параметры", "home", "Дом")
+	assignment := "Может выполнить любой"
+	if item.AssignedTo != nil {
+		assignment = "Назначенное задание"
+		for _, m := range h.Members {
+			if m.ID == *item.AssignedTo {
+				n := []rune(m.Name)
+				if len(n) > 20 {
+					n = n[:20]
+				}
+				assignment = "Исполнитель: " + string(n)
+			}
+		}
+	}
+	if item.Status == 2 {
+		assignment = "На паузе"
+	}
+	return b.card(uid, msg, string(name), fmt.Sprintf("%d баллов · %s\n%s\nЗадание %d из %d", item.Points, assignment, dueText(item.DueAt, h.Timezone), page+1, len(items)), h.ID, fmt.Sprintf("done:%d", item.ID), "Выполнено", fmt.Sprintf("page:%d", (page+1)%len(items)), "Следующее", fmt.Sprintf("options:%d", item.ID), "Параметры", "home", "Дом")
 }

@@ -43,7 +43,14 @@ func (b *Bot) Dispatch(ctx context.Context, api API) error {
 				continue
 			}
 		}
-		e := api.Call(ctx, row.Method, payload, nil)
+		ready, e := b.noticeReady(row)
+		if e != nil {
+			return e
+		}
+		if !ready {
+			continue
+		}
+		e = api.Call(ctx, row.Method, payload, nil)
 		if e == nil {
 			if e = b.DB.Model(&row).Update("sent", true).Error; e != nil {
 				return e
@@ -81,11 +88,32 @@ func (b *Bot) Run(ctx context.Context, api API, status func(string)) error {
 	if offset > 0 {
 		offset++
 	}
+	// Polling and the single durable-outbox worker are independent: an outbound
+	// timeout must never hold a widget query behind a queue of slow messages.
+	ctx, cancel := context.WithCancel(ctx)
+	workerDone := make(chan error, 1)
+	go func() {
+		for ctx.Err() == nil {
+			if e := b.PlanReminders(b.ReminderOffsets); e != nil {
+				workerDone <- e
+				cancel()
+				return
+			}
+			if e := b.Dispatch(ctx, api); e != nil {
+				workerDone <- e
+				cancel()
+				return
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(250 * time.Millisecond):
+			}
+		}
+		workerDone <- nil
+	}()
+	defer func() { cancel(); <-workerDone }()
 	failures := 0
 	for ctx.Err() == nil {
-		if e := b.Dispatch(ctx, api); e != nil {
-			return e
-		}
 		var updates []Update
 		e := api.Call(ctx, "getUpdates", map[string]any{"offset": offset, "timeout": 5, "limit": 20, "allowed_updates": []string{"message", "widget_query", "callback_query"}}, &updates)
 		if e != nil {
@@ -116,7 +144,9 @@ func (b *Bot) Run(ctx context.Context, api API, status func(string)) error {
 		for _, update := range updates {
 			// Acknowledge quickly; state mutation and delivery are separate.
 			if update.Query != nil {
-				_ = api.Call(ctx, "answerWidgetQuery", map[string]any{"widget_query_id": update.Query.ID}, nil)
+				ackCtx, stop := context.WithTimeout(ctx, 2*time.Second)
+				_ = api.Call(ackCtx, "answerWidgetQuery", map[string]any{"widget_query_id": update.Query.ID}, nil)
+				stop()
 			}
 			if update.Callback != nil {
 				_ = api.Call(ctx, "answerCallbackQuery", map[string]any{"callback_query_id": update.Callback.ID}, nil)
