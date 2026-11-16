@@ -4,7 +4,7 @@
 `/workspace/homequest-private/runtime/donetick.db`, секреты
 `/workspace/homequest-private/secrets.json` (0600), лог `bot.log` в private-каталоге.
 Никакие из этих приватных файлов не входят в Git. SQLite backup перед последним
-обновлением: `/workspace/homequest-private/pre-upgrade-e41b7b6.db`.
+обновлением: `/workspace/homequest-private/runtime/before-household-plans-20261116.db`.
 
 Проверять health при каждом возобновлении. Код обновляется после тестов, с backup
 и остановкой только собственного polling consumer. Доступность после завершения
@@ -80,14 +80,22 @@ http://127.0.0.1:4173. Это loopback-стенд с временной SQLite �
 make migrate GO=/workspace/toolchains/go/bin/go`. Она завершается после миграций,
 не обращается в Telegram и не запускает workers. Повтор безопасен.
 
-Проверено 2026-11-16 08:54 UTC: запущен feature-код 73d18af; health:
+Проверено 2026-11-16 11:25 UTC: запущен код 548d608; health:
 database=ready, telegram=polling, scheduler=ready, ui=buttons. LLM/STT configured;
-это не live voice smoke. Процесс Cloud session 93135; это не systemd service.
-Перед рестартом старый consumer остановлен и создан приватный SQLite snapshot
-`/workspace/homequest-private/runtime/before-wishlist-reminders-20261116.db` (0600).
-Миграции применились при запуске к существующей БД. getMe/webhook/models HTTP 200,
-webhook отсутствует. HTML preview запускается командой выше, отдельный постоянный
-preview-процесс этим checkpoint не поднимался.
+это не live voice smoke. Cloud session 31016, PID при запуске 207077;
+это не systemd service. Перед стартом проверено отсутствие другого локального
+процесса; создан приватный SQLite snapshot
+`/workspace/homequest-private/runtime/before-household-plans-20261116.db` (0600).
+Миграции выполнены дважды на существующей БД, оба раза успешно.
+getMe/webhook/models HTTP 200, webhook отсутствует. Временный Cloud-процесс
+может остановиться вместе со средой: всегда проверять health перед использованием.
+
+Недельный итог планируется по понедельникам в 09:00 семьи в пределах 5 минут,
+только если за прошлую неделю были принятые дела. Пропущенные недели не рассылаются.
+Цель начинает действовать со следующего понедельника; история политики сохраняется
+и для недель без активности. Настройки quiet/mute/vacation применяются к доставке.
+Передача дела действует 7 дней; закрытие/переназначение/выход делают её неактуальной.
+Покупки не меняют игровой ledger. Новые таблицы находятся в той же SQLite.
 
 ## Развёртывание рядом с LiteLLM — подготовлено, не включено
 

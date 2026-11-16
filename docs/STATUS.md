@@ -92,6 +92,10 @@ Premium уже реализован: семейный manual_test, расшир�
 123 различные проекции прошли официальный runtime на 200px; дополнительно 16
 сочетаний новых экранов/тем/ширин. Race bot/task/stats/shopping PASS.
 После последнего исправления истории целей Go suite/build и plans HTML повторены;
-результат CI и актуальный Cloud readiness фиксируются при публикации.
+race bot/stats также повторён и PASS. Код опубликован через Git Data API,
+дерево совпадает с локальным 548d608. GitHub CI выполняет тот же harness.
+Cloud readiness 11:25 UTC: DB/scheduler ready, Telegram polling, UI buttons,
+LLM/STT configured. Один процесс, session 31016; backup и restart — RUNBOOK.
+Это состояние проверки, не гарантия uptime.
 Подробное распределение проверок — TEST_MATRIX; это не обещание исчерпывающего
 перебора всех входных данных или успешной проверки живого Telegram-клиента.
