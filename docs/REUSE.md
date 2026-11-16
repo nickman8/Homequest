@@ -149,3 +149,11 @@ Shopping и weekly goal — новые небольшие модули пове�
 семейной авторизации и durable outbox. Покупки не создают вторую экономику:
 они не начисляют и не списывают баллы. Новые страницы используют существующий
 Open Props/Lucide шаблон без дополнительных runtime-библиотек.
+
+## Исследование полноценного агента
+
+[AGENT_RESEARCH.md](AGENT_RESEARCH.md) сравнивает Todoist/Home Assistant/Notion/Linear,
+Eino/Google ADK/Genkit/LangGraph и роль MCP. Отдельный experiments/agent-spike реально
+запускает Eino v0.9.23 + OpenAI adapter v0.1.13 через VyceAI; зависимости pinned в
+его go.mod/go.sum, production-модуль не изменён. Инструменты синтетические, доменные
+записи отсутствуют. Полноценный агент и контекст комнаты пока только спроектированы.
