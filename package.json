@@ -1,0 +1,1 @@
+{"name":"homequest-widget-build","private":true,"type":"module","scripts":{"build:widgets":"node scripts/build-widgets.mjs"},"devDependencies":{"open-props":"1.7.23","lucide-static":"1.73.0"}}

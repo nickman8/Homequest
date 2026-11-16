@@ -1,0 +1,17 @@
+<style>.panel{padding:1rem;border-radius:1rem}button{min-height:44px;width:100%;margin-top:.5rem}svg{width:24px;height:24px}p{white-space:pre-wrap;overflow-wrap:break-word}h3{overflow-wrap:break-word}</style><div class="panel"><!-- @license lucide-static v1.73.0 - ISC -->
+<svg
+  class="lucide lucide-house"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8" />
+  <path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+</svg>
+<h3 id="title">Дом</h3><p id="text">Загрузка</p><div id="buttons"></div></div><script>function draw(){var s;try{s=JSON.parse(TelegramWidget.chatData||'{}')}catch(e){s={}}document.getElementById('title').textContent=s.title||'Дом';document.getElementById('text').textContent=s.text||'Откройте /start';var root=document.getElementById('buttons');root.textContent='';(s.buttons||[]).forEach(function(item){var b=document.createElement('button');b.textContent=item.label;b.onclick=function(){b.disabled=true;TelegramWidget.request(item.action).catch(function(){b.disabled=false;document.getElementById('text').textContent='Не удалось связаться с ботом. Попробуйте снова'})};root.appendChild(b)})}TelegramWidget.onEvent('chatDataChanged',draw);draw();TelegramWidget.ready();</script>
