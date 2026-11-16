@@ -6,6 +6,10 @@
 Никакие из этих приватных файлов не входят в Git. SQLite backup перед последним
 обновлением: `/workspace/homequest-private/pre-upgrade-5c58982.db`.
 
+Аудит 16 ноября: прежний временный процесс уже завершился. После getMe/webhook
+и проверки отсутствия второго consumer перезапущен `bin/homequest` (код f54f780);
+health подтвердил ready/polling. Проверять health заново при каждом возобновлении.
+
 ```sh
 cd /workspace/Homequest
 make widgets build GO=/workspace/toolchains/go/bin/go

@@ -55,3 +55,11 @@ Opt-in команда: HOMEQUEST_LIVE_AI=1 HOMEQUEST_SECRETS_FILE=/absolute/priv
 TestWidgetDenialExposesOnlyKnownReason и TestWidgetDeniedDeliversUsefulButtons PASS:
 типизированная причина без raw ошибки/токена, один fallback, сохранение кнопок,
 без повторного доменного эффекта. Не считать fallback доказательством Widgets.
+
+Аудит 16 ноября: make test PASS (cache), make harness PASS повторно:
+9 spike + 9 E02 + 17 product cards, 3 screenshots. Повторный getMe/webhook/models
+HTTP 200. Новых Telegram Widgets или human-voice PASS нет.
+Причина запрета подтверждена ответом levlam от 13 ноября в
+[официальном issue #947](https://github.com/tdlib/telegram-bot-api/issues/947):
+обычным ботам запрещены Widgets даже в private chats. Руководство по доступности
+не отражает это ограничение. Полный список незакрытых критериев — STATUS.

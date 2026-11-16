@@ -9,14 +9,16 @@ SHA `ebfb340d7bd4e2e009d6f2f9ad073868acaf6412`.
 reward/redemption, LICENSE.md. Стек Go сохранён. Исходный README перенесён в
 UPSTREAM_README.md; upstream workflows сохранены в upstream-workflows, но не запускаются
 автоматически (включали scheduled release). Новая логика только в internal/homequest,
-cmd/widget-probe, widgets и scripts/tests. Семейный Telegram-адаптер пока не реализован.
+cmd/widget-probe, widgets и scripts/tests; узкие расширения также внесены в upstream
+scheduler/planner. Семейный Telegram-адаптер реализован в internal/homequest/bot.
 
 До изменений: go test ./... — PASS (31 пакет с тестами); go build — PASS.
 Запуск оригинального бинарника на пустой SQLite выполнил миграции; sandbox запрещал
 listening socket, после разрешённого запуска вне sandbox health HTTP 200.
 Повторный запуск на той же БД также успешен. Upstream checkout остался чистым.
 
-Проверенные ограничения (не исправлены):
+Ограничения исходного upstream (HomeQuest обрабатывает их в своём адаптере;
+старые HTTP handlers не являются продуктовым интерфейсом):
 - chore/handler.go ApproveChore допускает admin/manager, не любого другого взрослого;
 - следующий срок при approval вычисляется от pendingHistory.PerformedAt, не accepted_at;
 - reward/repo сохраняет snapshot названия/цены, но списывает при approval без резерва
@@ -36,7 +38,7 @@ listening socket, после разрешённого запуска вне sand
 README sandbox описывает старый SDK без запросов; исходники и runtime-проверка
 подтвердили request/chatDataChanged. Пин обязателен. В production JS-библиотеки не входят.
 
-## Изученные, но ещё не перенесённые доноры
+## Первичная оценка доноров (фактический перенос описан ниже)
 
 - cmintey/wishlist `ee56cb9635a96a594140a95d57bc3e37322a750b`:
   src/lib/server/list.ts, routes/lists/[id]/+page.server.ts, config.ts.
@@ -46,7 +48,7 @@ README sandbox описывает старый SDK без запросов; ис
   backend/routers/vacation.py использует require_parent и общую выборку отпусков
   без family scope; напрямую для мультисемейного HomeQuest непригоден.
 - SYSTRAN/faster-whisper HEAD `6cb639e70786aea42b9233006ae60eaf07190bdb`:
-  только подтверждён доступный SHA; пакет/модель ещё не установлены, reuse не заявляется.
+  первично проверен SHA; затем установлен релиз 1.2.1, подробности ниже.
 
 ## Инструкции и источники
 
@@ -115,8 +117,8 @@ STT выполнен на локально синтезированном рус
 подтверждение качества живого русского Telegram voice. Нужна человеческая запись.
 Аудио и временные файлы остаются вне Git; transient audio удаляется адаптером.
 
-NickLLM models повторно HTTP 403. Точный model ID не задан, live completion,
-structured-output capability и end-to-end voice с выбранной LLM не подтверждены.
+Историческая проверка прежнего NickLLM: models HTTP 403, model ID тогда не был
+подтверждён. Этот блокер снят разрешённым переключением gateway, описанным ниже.
 Адаптер не выбирает альтернативную модель; JSON строго валидируется локально.
 
 ## Переключение на VyceAI по запросу владельца
