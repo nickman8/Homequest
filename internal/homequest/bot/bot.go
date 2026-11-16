@@ -3,6 +3,7 @@ package bot
 
 import (
 	"crypto/rand"
+	"donetick.com/core/internal/homequest/agent"
 	"donetick.com/core/internal/homequest/assistant"
 	"donetick.com/core/internal/homequest/billing"
 	"donetick.com/core/internal/homequest/family"
@@ -132,6 +133,7 @@ type Bot struct {
 	screen          string
 	UIMode          string
 	AIProvider      string
+	Agent           agent.Engine
 	LLM             assistant.LLM
 	STT             assistant.STT
 	VoiceSource     VoiceSource
@@ -167,6 +169,9 @@ func New(db *gorm.DB, html, username string) (*Bot, error) {
 		return nil, e
 	}
 	if _, e = billing.New(db, ""); e != nil {
+		return nil, e
+	}
+	if _, e = agent.New(db); e != nil {
 		return nil, e
 	}
 	e = db.AutoMigrate(&Receipt{}, &Cursor{}, &Delivery{}, &Action{}, &CardView{}, &ReminderPlan{}, &Contact{}, &u.UserNotificationPreference{}, &RestPreference{}, &AIJob{}, &AIConsent{})
@@ -365,6 +370,12 @@ func (b *Bot) home(uid, msg int64) error {
 	return b.card(uid, msg, h.Name, fmt.Sprintf("Часовой пояс: %s\nУчастников: %d\nДела по дому — общий вклад в уют.", h.Timezone, len(h.Members)), h.ID, opts...)
 }
 func (b *Bot) message(uid int64, text string) error {
+	if text == "/agent" {
+		return b.agentHome(uid, 0)
+	}
+	if text == "/stop" {
+		return b.stopAgent(uid)
+	}
 	if len(text) > 4096 {
 		return b.say(uid, "Сообщение слишком длинное")
 	}
@@ -578,6 +589,9 @@ func (b *Bot) action(uid int64, token string, msg int64) error {
 	if e := b.DB.Model(&a).Update("used", true).Error; e != nil {
 		return e
 	}
+	if handled, e := b.agentAction(uid, msg, a); handled {
+		return e
+	}
 	if handled, e := b.shoppingAction(uid, msg, a); handled {
 		return e
 	}
@@ -604,6 +618,9 @@ func (b *Bot) action(uid int64, token string, msg int64) error {
 		}
 		if e = b.Family.Switch(uid, id); e != nil {
 			return b.say(uid, "Этот дом больше недоступен. Откройте /start.")
+		}
+		if e = (&agent.Service{DB: b.DB}).Reset(uid, b.Now()); e != nil {
+			return e
 		}
 		return b.home(uid, msg)
 	}

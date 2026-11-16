@@ -3,6 +3,8 @@ package main
 
 import (
 	"context"
+	"donetick.com/core/internal/homequest/agent"
+	"donetick.com/core/internal/homequest/agent/agenttest"
 	"donetick.com/core/internal/homequest/assistant"
 	"donetick.com/core/internal/homequest/bot"
 	"donetick.com/core/internal/homequest/shopping"
@@ -34,18 +36,19 @@ func main() {
 		os.Exit(1)
 	}
 	var input struct {
-		Viewer      int64              `json:"viewer"`
-		Text        string             `json:"text"`
-		Action      string             `json:"action"`
-		UpdateID    int64              `json:"update_id"`
-		Photo       string             `json:"photo"`
-		Now         string             `json:"now"`
-		BillingMode string             `json:"billing_mode"`
-		Tick        bool               `json:"tick"`
-		AICommand   *assistant.Command `json:"ai_command"`
-		Speech      string             `json:"speech"`
-		Voice       bool               `json:"voice"`
-		ProcessAI   bool               `json:"process_ai"`
+		Viewer       int64              `json:"viewer"`
+		Text         string             `json:"text"`
+		Action       string             `json:"action"`
+		UpdateID     int64              `json:"update_id"`
+		Photo        string             `json:"photo"`
+		Now          string             `json:"now"`
+		BillingMode  string             `json:"billing_mode"`
+		Tick         bool               `json:"tick"`
+		AgentFixture *agenttest.Model   `json:"agent_fixture"`
+		AICommand    *assistant.Command `json:"ai_command"`
+		Speech       string             `json:"speech"`
+		Voice        bool               `json:"voice"`
+		ProcessAI    bool               `json:"process_ai"`
 	}
 	if json.NewDecoder(os.Stdin).Decode(&input) != nil {
 		os.Exit(2)
@@ -55,6 +58,13 @@ func main() {
 		app.LLM = fixture
 		app.STT = fixture
 		app.VoiceSource = fixture
+		app.AIProvider = "fixture"
+	}
+	if input.AgentFixture != nil {
+		app.Agent = &agent.Eino{Model: input.AgentFixture}
+		speech := &fixtureAI{Speech: input.Speech}
+		app.STT = speech
+		app.VoiceSource = speech
 		app.AIProvider = "fixture"
 	}
 	app.BillingMode = "manual_test"

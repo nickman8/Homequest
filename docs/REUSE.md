@@ -155,5 +155,17 @@ Open Props/Lucide шаблон без дополнительных runtime-би�
 [AGENT_RESEARCH.md](AGENT_RESEARCH.md) сравнивает Todoist/Home Assistant/Notion/Linear,
 Eino/Google ADK/Genkit/LangGraph и роль MCP. Отдельный experiments/agent-spike реально
 запускает Eino v0.9.23 + OpenAI adapter v0.1.13 через VyceAI; зависимости pinned в
-его go.mod/go.sum, production-модуль не изменён. Инструменты синтетические, доменные
-записи отсутствуют. Полноценный агент и контекст комнаты пока только спроектированы.
+его go.mod/go.sum; инструменты эксперимента синтетические.
+
+В первом рабочем этапе те же пины теперь подключены и в корневом go.mod/go.sum:
+`internal/homequest/agent/engine.go` использует готовые ChatModelAgent, Runner,
+InferTool и OpenAI adapter. `service.go`/`plan.go` добавляют только HomeQuest scope,
+SQLite-сессии, каталог 15 действий и preview/apply; операции вызывают существующие
+семейные/задачные/shopping сервисы. Preview выполняет эти же DB-only сервисы в
+откатываемом savepoint: внешние HTTP-вызовы внутри него запрещены архитектурой.
+Eino checkpoint не подменяет атомарность: план, доменные изменения, AIJob и outbox
+подтверждаются в одной транзакции обработчика. Нет второго backend или второй БД.
+
+Проверки: service_test.go, bot/agent_test.go, tests/agent-e2e.mts; отдельный opt-in
+TestLiveEinoRoomPlan использует реальный gateway и временную SQLite. MCP SDK пока
+не установлен; полный паритет UI-действий ещё не достигнут.

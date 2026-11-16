@@ -68,7 +68,7 @@ update дополнительно проверяет сохранение сос
 | plans-e2e.mts | Набор: invalid points/edit/skip/duplicate; комнаты: canonical duplicate/rename/delete с сохранением задач; очередь и добровольная передача/отказ/replay/чужой токен/старое выполнение; недельная граница, цель, mute и реальный outbox worker без повторной рассылки |
 | shopping-e2e.mts | Batch/draft/edit/claim race/buy/reopen/archive, чужая семья, старая отменённая кнопка, двойное сохранение, max Cyrillic/XSS/invalid length; fixture voice→consent→реальная очередь→черновик→HTML confirm/cancel без ранних записей |
 | assistant-e2e.mts | E08/E09 + undo: fixture voice, согласие, завершение, компенсация/replay, ошибочная команда модели на отрицание/будущее/неуверенность/прошлое, чужой ID, task draft cancel/confirm/replay, optional photo, истёкшее undo, рейтинг/достижения/история |
-| e2e-runtime.mts | Все различные state из четырёх подробных путей → официальный QuickJS/validator/renderer, 200px, 1024-byte state/600px height; новые главные экраны также 320/390 dark/custom |
+| e2e-runtime.mts | Все различные state из пяти подробных путей → официальный QuickJS/validator/renderer, 200px, 1024-byte state/600px height; новые главные экраны также 320/390 dark/custom |
 | bot-widget-e02.mts | Отдельно связанный официальный runtime gesture → сформированный request → handlers/SQLite → state → новый renderer; 9 width/theme комбинаций |
 | widget-harness.mts, widget-feedback.mts, card-layouts.mts | Spike и общий HTML, ACK/timeout/rate-limit/error, локальная пагинация, длинный текст, 200px/font20, 32 граничные карточки |
 
@@ -106,3 +106,24 @@ HTML journeys: 174 + 101 + 80 + 43 = 398 состояний; официальн�
 Race bot/task/stats/shopping PASS. После уточнения политики пустых недель
 Go suite/build и plans HTML повторены. Live VyceAI eval 10/10 PASS (42.71 s);
 этот результат не распространяется на STT или настоящий Telegram-клиент.
+
+## Агент и контекст комнаты — первый этап
+
+| Проверка / команда | Уровень и покрытие | Результат / граница |
+|---|---|---|
+| `go test ./internal/homequest/agent` | Реальная SQLite: сохранение/изоляция/удаление комнаты, preview без записей, атомарный batch, local timezone, stale version, replay, конкурентное apply, запрет чужого редактирования, фото/approval, уход участника, TTL | PASS; live-test пропускается без opt-in |
+| `go test ./internal/homequest/bot -run TestAgent` | Настоящие updates и Eino с offline tool-calling model: room → read → preview → restart → confirmation; остановка, смена scope в очереди, foreign ID, expiry, отрицания, голосовое fixture-подтверждение | PASS; транспорт и STT управляемые, модель не возвращает готовый успех БД |
+| `TestAgentClarificationCannotConfirmAnOlderPlan` | Новая реплика/вопрос отменяет старое pending intent; последующее «да» не применяет старый план | PASS после воспроизведённого падения |
+| `tests/agent-e2e.mts` (в `make harness`) | Реальный HTML/Playwright → handlers → Eino tools → SQLite; две семьи, разные комнаты участников, batch/replay, голосовые fixtures, stale scope/versions, expiry, stop/reset | PASS, 67 состояний; Browser bridge, отдельно от настоящего Telegram |
+| `tests/agent-widget.mts` | Официальный QuickJS/DOM renderer: жест подтверждения → реальный request → handlers/SQLite → обновлённый state → rendering; создание в выбранной комнате и перенос; 200/320/390px dark | PASS, 6 связанных операций; модель offline, UI и domain реальные |
+| `tests/e2e-runtime.mts` | Все различные проекции пяти HTML-путей, включая новые карточки агента, в официальном renderer; 200px плюс 24 theme/width комбинации | PASS, 150 различных проекций; изображения agent-plan/agent-context без пользовательских данных |
+| `HQ_AGENT_LIVE=1 HOMEQUEST_SECRETS_FILE=/absolute/private/secrets.json go test ./internal/homequest/agent -run TestLiveEinoRoomPlan -count=1 -v` | Реальный VyceAI/DeepSeek → Eino tool calls → выбранная кухня при одинаковых названиях → preview/apply в временной SQLite | Первый запуск PASS 16.11.2026, 10.02s. Два последующих запроса — gateway timeout около 25s; минимальный completion также timeout. Нет production-записей, STT/Telegram не проверены |
+| `go test -race ./internal/homequest/agent/... ./internal/homequest/bot` | Гонки runtime, domain и handlers | PASS; после добавления конкурентного apply отдельно повторён agent race |
+
+Новый агент пока не покрывает все функции приложения: scope/инструменты наград,
+wishlist, администрирования и других оставшихся групп перечислены в STATUS.
+Проверки существующих функций кнопками не считаются доказательством их доступа агенту.
+
+Дополнительные регрессии агента: неподдерживаемые поля операции отвергаются (нельзя
+молча потерять требование фото); preview показывает фактическую комнату каждой
+задачи; новое содержательное обращение снимает старый pending plan.

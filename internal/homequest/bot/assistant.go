@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"donetick.com/core/internal/homequest/agent"
 	"donetick.com/core/internal/homequest/assistant"
 	"donetick.com/core/internal/homequest/billing"
 	"donetick.com/core/internal/homequest/family"
@@ -16,6 +17,7 @@ import (
 )
 
 type AIConsent struct {
+	Scope    string
 	Provider string
 	UserID   int64 `gorm:"primaryKey;autoIncrement:false"`
 	Accepted bool
@@ -24,16 +26,23 @@ type AIConsent struct {
 func (AIConsent) TableName() string { return "hq_ai_consents" }
 
 type AIJob struct {
-	Provider   string
-	ID         uint `gorm:"primaryKey"`
-	Viewer     int64
-	CircleID   int
-	Text       string
-	VoiceID    string
-	State      string `gorm:"index"`
-	Command    string
-	Candidates string
-	CreatedAt  time.Time
+	ConsentScope    string
+	Agent           bool
+	ContextRevision int
+	RoomID          int
+	Timezone        string
+	PlanID          string
+	ConfirmPlan     string
+	Provider        string
+	ID              uint `gorm:"primaryKey"`
+	Viewer          int64
+	CircleID        int
+	Text            string
+	VoiceID         string
+	State           string `gorm:"index"`
+	Command         string
+	Candidates      string
+	CreatedAt       time.Time
 }
 
 func (AIJob) TableName() string { return "hq_ai_jobs" }
@@ -43,7 +52,7 @@ type VoiceSource interface {
 }
 
 func (b *Bot) enqueueAI(uid int64, text, voice string) error {
-	if b.LLM == nil && voice == "" {
+	if b.LLM == nil && b.Agent == nil && voice == "" {
 		return b.say(uid, "Помощник пока недоступен: доступ к выбранной модели не подтверждён. Задания можно выполнять кнопками.")
 	}
 	if voice != "" && (b.STT == nil || b.VoiceSource == nil) {
@@ -79,16 +88,38 @@ func (b *Bot) enqueueAI(uid int64, text, voice string) error {
 	}
 	var consent AIConsent
 	_ = b.DB.First(&consent, "user_id = ?", uid).Error
+	scope := ""
+	if b.Agent != nil {
+		scope = "agent_v1"
+	}
 	state := "queued"
-	if !consent.Accepted || consent.Provider != b.AIProvider {
+	if !consent.Accepted || consent.Provider != b.AIProvider || consent.Scope != scope {
 		state = "consent"
 	}
-	job := AIJob{Provider: b.AIProvider, Viewer: uid, CircleID: h.ID, Text: text, VoiceID: voice, State: state, CreatedAt: b.Now()}
+	job := AIJob{ConsentScope: scope, Provider: b.AIProvider, Viewer: uid, CircleID: h.ID, Text: text, VoiceID: voice, State: state, CreatedAt: b.Now()}
+	if b.Agent != nil {
+		c, e := (&agent.Service{DB: b.DB}).Context(uid, b.Now())
+		if e != nil {
+			return e
+		}
+		job.Agent = true
+		job.ContextRevision = c.Revision
+		job.RoomID = c.RoomID
+		job.Timezone = c.Timezone
+		var pendingPlan agent.Plan
+		if b.DB.Where("viewer=? AND circle_id=? AND revision=? AND state=? AND expires>?", uid, h.ID, c.Revision, "pending", b.Now()).Order("created_at DESC").First(&pendingPlan).Error == nil {
+			job.ConfirmPlan = pendingPlan.ID
+		}
+	}
 	if e = b.DB.Create(&job).Error; e != nil {
 		return e
 	}
 	if state == "consent" {
-		return b.card(uid, 0, "Помощник по дому", "Голос распознаётся локально. Если VyceAI доступен, текст и названия заданий передаются ему для понимания. Продолжить?", h.ID, fmt.Sprintf("ai_consent:%d", job.ID), "Понятно, продолжить", fmt.Sprintf("ai_cancel:%d", job.ID), "Отмена")
+		notice := "Голос распознаётся локально. Если VyceAI доступен, текст и названия заданий передаются ему для понимания. Продолжить?"
+		if job.Agent {
+			notice = "Голос распознаётся локально. VyceAI получит текст, задачи, участников, комнаты и до 4 прошлых обращений. Память сбрасывается после суток без обращений; её можно очистить. Продолжить?"
+		}
+		return b.card(uid, 0, "Помощник по дому", notice, h.ID, fmt.Sprintf("ai_consent:%d", job.ID), "Понятно, продолжить", fmt.Sprintf("ai_cancel:%d", job.ID), "Отмена")
 	}
 	return b.say(uid, "Обрабатываю сообщение. Обычные кнопки доступны.")
 }
@@ -113,6 +144,11 @@ func (b *Bot) aiAction(uid, msg int64, a Action) (bool, error) {
 	}
 	switch p[0] {
 	case "ai_cancel":
+		if job.Agent && job.PlanID != "" {
+			if e = (&agent.Service{DB: b.DB}).Cancel(uid, job.PlanID, b.Now()); e != nil {
+				return true, e
+			}
+		}
 		return true, b.DB.Model(&job).Updates(map[string]any{"state": "cancelled", "text": "", "voice_id": "", "command": "", "candidates": ""}).Error
 	case "ai_consent":
 		if job.State != "consent" {
@@ -121,7 +157,7 @@ func (b *Bot) aiAction(uid, msg int64, a Action) (bool, error) {
 		if job.Provider != b.AIProvider {
 			return true, b.say(uid, "Помощник обновился. Отправьте сообщение заново, чтобы подтвердить обработку текста.")
 		}
-		if e = b.DB.Save(&AIConsent{UserID: uid, Accepted: true, Provider: b.AIProvider}).Error; e != nil {
+		if e = b.DB.Save(&AIConsent{UserID: uid, Accepted: true, Provider: b.AIProvider, Scope: job.ConsentScope}).Error; e != nil {
 			return true, e
 		}
 		if e = b.DB.Model(&job).Update("state", "queued").Error; e != nil {
@@ -132,12 +168,18 @@ func (b *Bot) aiAction(uid, msg int64, a Action) (bool, error) {
 		if job.State != "confirm" {
 			return true, b.home(uid, msg)
 		}
+		if job.Agent {
+			return true, b.applyAgent(&job)
+		}
 		return true, b.applyAI(&job, true)
 	}
 	return true, b.home(uid, msg)
 }
 func (b *Bot) ProcessAI(ctx context.Context) error {
 	// Text/file references are transient. Keep only audit state after expiration.
+	if e := (&agent.Service{DB: b.DB}).Purge(b.Now()); e != nil {
+		return e
+	}
 	if e := b.DB.Model(&AIJob{}).Where("created_at < ? AND state NOT IN ?", b.Now().Add(-15*time.Minute), []string{"done", "failed", "cancelled", "expired"}).Updates(map[string]any{"text": "", "voice_id": "", "command": "", "candidates": "", "state": "expired"}).Error; e != nil {
 		return e
 	}
@@ -158,6 +200,13 @@ func (b *Bot) ProcessAI(ctx context.Context) error {
 	}
 	fail := func() error {
 		return b.DB.Transaction(func(tx *gorm.DB) error {
+			var current AIJob
+			if e := tx.First(&current, job.ID).Error; e != nil {
+				return e
+			}
+			if current.State != "processing" {
+				return nil
+			}
 			child := *b
 			child.DB = tx
 			child.Family = &family.Service{DB: tx}
@@ -191,6 +240,12 @@ func (b *Bot) ProcessAI(ctx context.Context) error {
 		}
 	}
 
+	if job.Agent {
+		if e = b.processAgent(ctx, &job); e != nil {
+			return fail()
+		}
+		return nil
+	}
 	if b.LLM == nil {
 		return b.DB.Transaction(func(tx *gorm.DB) error {
 			child := *b

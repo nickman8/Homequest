@@ -2,6 +2,7 @@ package bot
 
 import (
 	"crypto/rand"
+	"donetick.com/core/internal/homequest/agent"
 	"donetick.com/core/internal/homequest/family"
 	"donetick.com/core/internal/homequest/task"
 	u "donetick.com/core/internal/user/model"
@@ -21,7 +22,7 @@ type organizationDraft struct {
 }
 
 func (b *Bot) organization(uid, msg int64, circle int) error {
-	return b.card(uid, msg, "Домашние планы", "Наборы дел помогут начать. Комнаты собирают связанные задачи.", circle, "rooms:0", "Комнаты", "presets", "Готовые наборы", "handoffs:0", "Передачи дел", "weekly:0", "Итог недели", "shopping:0:0", "Покупки", "home", "Дом")
+	return b.card(uid, msg, "Домашние планы", "Наборы дел помогут начать. Комнаты собирают связанные задачи.", circle, "rooms:0", "Комнаты", "presets", "Готовые наборы", "handoffs:0", "Передачи дел", "weekly:0", "Итог недели", "shopping:0:0", "Покупки", "agent", "Помощник", "home", "Дом")
 }
 func (b *Bot) rooms(uid, msg int64, circle, page int) error {
 	rows, e := (&task.Service{DB: b.DB}).Rooms(uid, circle)
@@ -38,18 +39,22 @@ func (b *Bot) rooms(uid, msg int64, circle, page int) error {
 	return b.card(uid, msg, r.Name, "Комната объединяет задания. Удаление комнаты сохранит сами дела.", circle, fmt.Sprintf("room_tasks:%d:0", r.ID), "Дела комнаты", fmt.Sprintf("rooms:%d", (page+1)%len(rows)), "Следующая комната", "room_new", "Добавить", fmt.Sprintf("room_rename:%d", r.ID), "Переименовать", fmt.Sprintf("room_delete:%d", r.ID), "Убрать комнату", "household", "Назад")
 }
 func (b *Bot) roomTasks(uid, msg int64, circle, room, page int) error {
+	c, e := (&agent.Service{DB: b.DB}).SelectRoom(uid, room, b.Now())
+	if e != nil {
+		return b.say(uid, "Комната больше недоступна")
+	}
 	rows, e := (&task.Service{DB: b.DB}).RoomTasks(uid, circle, room)
 	if e != nil {
 		return b.say(uid, "Комната больше недоступна")
 	}
 	if len(rows) == 0 {
-		return b.card(uid, msg, "Дела комнаты", "Пока нет открытых дел. Комнату можно выбрать в параметрах задания.", circle, "rooms:0", "К комнатам", "new_task", "Добавить задание")
+		return b.card(uid, msg, "Дела комнаты", c.Label()+"\nПока нет открытых дел.", circle, "rooms:0", "К комнатам", "new_task", "Добавить задание")
 	}
 	if page < 0 || page >= len(rows) {
 		page = 0
 	}
 	v := rows[page]
-	return b.card(uid, msg, short(v.Name, 45), fmt.Sprintf("%d баллов · %d из %d", v.Points, page+1, len(rows)), circle, fmt.Sprintf("done:%d", v.ID), "Выполнено", fmt.Sprintf("options:%d", v.ID), "Параметры", fmt.Sprintf("room_tasks:%d:%d", room, (page+1)%len(rows)), "Следующее", "rooms:0", "К комнатам")
+	return b.card(uid, msg, short(v.Name, 45), c.Label()+"\n"+fmt.Sprintf("%d баллов · %d из %d", v.Points, page+1, len(rows)), circle, fmt.Sprintf("done:%d", v.ID), "Выполнено", fmt.Sprintf("options:%d", v.ID), "Параметры", fmt.Sprintf("room_tasks:%d:%d", room, (page+1)%len(rows)), "Следующее", "rooms:0", "К комнатам")
 }
 func (b *Bot) saveOrganization(uid, msg int64, d organizationDraft) error {
 	raw, _ := json.Marshal(d)

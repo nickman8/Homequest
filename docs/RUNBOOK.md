@@ -4,7 +4,7 @@
 `/workspace/homequest-private/runtime/donetick.db`, секреты
 `/workspace/homequest-private/secrets.json` (0600), лог `bot.log` в private-каталоге.
 Никакие из этих приватных файлов не входят в Git. SQLite backup перед последним
-обновлением: `/workspace/homequest-private/runtime/before-household-plans-20261116.db`.
+обновлением: `/workspace/homequest-private/runtime/before-agent-20261116.db`.
 
 Проверять health при каждом возобновлении. Код обновляется после тестов, с backup
 и остановкой только собственного polling consumer. Доступность после завершения
@@ -16,6 +16,7 @@ make widgets build GO=/workspace/toolchains/go/bin/go
 DATA_DIR=/workspace/homequest-private/runtime \
 HOMEQUEST_SECRETS_FILE=/workspace/homequest-private/secrets.json \
 BILLING_MODE=manual_test \
+AI_MODE=agent \
 TELEGRAM_UI=buttons \
 STT_PYTHON=/workspace/homequest-private/stt-venv/bin/python \
 STT_MODEL_DIR=/workspace/homequest-private/stt-models \
@@ -45,6 +46,16 @@ STT timeout 90s; локальное аудио удаляется после з�
 исключения. VyceAI endpoint и проверенный model ID заданы в приватном конфиге через прежние
 NICKLLM_* имена. Для smoke использовать scripts/preflight.py и opt-in TestLive
 из TEST_MATRIX. При смене gateway согласие на обработку запрашивается снова.
+
+`AI_MODE=agent` включает готовый Eino runtime: максимум 6 model iterations,
+12 tool calls и 75 секунд на запрос (25 секунд на HTTP-вызов). Текст/voice используют
+одну bounded очередь. Сессии hq_agent_sessions и планы hq_agent_plans находятся
+в той же SQLite; backup включает их. Планы и их содержимое истекают через 15 минут.
+Контекст/до 4 обращений — после 24 часов без активности; ручной сброс доступен
+в /agent. При restart незавершённый LLM-вызов помечается failed без автоматического
+повтора; уже показанный pending plan можно подтвердить до истечения срока.
+Сбой между DB commit и доставкой не повторяет доменный эффект.
+`AI_MODE=legacy` отключает новый runtime без удаления истории семей.
 
 BILLING_MODE=manual_test разрешает владельцу тестовый Premium. В других режимах
 ручная выдача отклоняется сервером. Stars только будущий интерфейс, платежей нет.
@@ -199,3 +210,18 @@ Actions secrets/variables через установленный connector не �
 выдачи этого отдельного scope/настройки владельцем CI credentials не установлены.
 Обычный repository admin/push статус сам по себе не доказывает эти API permissions.
 Поэтому у deploy job есть явный false guard: публикация подготовки ничего не запускает.
+
+## Последний запуск агента — 16 ноября 2026
+
+Cloud session 11906, PID 293683: health проверен после запуска — database/scheduler
+ready, telegram polling, ui buttons, llm agent_configured, stt configured.
+Предыдущие процессы 119522/148547/207077 — завершённые zombie, новых competing
+consumers нет. Использован AI_MODE=agent; команда рестарта приведена в начале.
+Backup до миграции: runtime/before-agent-20261116.db, 0600.
+
+agent_configured не означает доступность gateway: первый live smoke Eino прошёл,
+затем два tool-calling запроса и минимальный completion получили таймаут 25s.
+Не менять ключ/модель на основании таймаута. Повторить opt-in TestLiveEinoRoomPlan
+после восстановления ответов VyceAI. Пользовательская проверка: /agent, выбрать
+комнату, «Перенеси все дела здесь на завтра в 19:00», проверить и подтвердить план.
+Человеческий русский voice проверяется отдельно. Cloud uptime не гарантируется.

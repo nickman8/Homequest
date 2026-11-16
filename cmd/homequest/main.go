@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"donetick.com/core/internal/homequest/agent"
 	"donetick.com/core/internal/homequest/assistant"
 	"donetick.com/core/internal/homequest/bot"
 	"donetick.com/core/internal/homequest/widget"
@@ -106,10 +107,20 @@ func run() error {
 	if e = app.ConfigureUI(config("TELEGRAM_UI")); e != nil {
 		return e
 	}
+	if mode := config("AI_MODE"); mode != "" && mode != "legacy" && mode != "agent" {
+		return errors.New("invalid AI_MODE")
+	}
 	llmStatus := "model_not_verified"
 	if model := config("NICKLLM_MODEL"); model != "" && config("NICKLLM_API_KEY") != "" && config("NICKLLM_BASE_URL") != "" {
 		app.LLM = &assistant.NickLLM{Key: config("NICKLLM_API_KEY"), Model: model, BaseURL: config("NICKLLM_BASE_URL")}
 		llmStatus = "configured"
+		if config("AI_MODE") == "agent" {
+			app.Agent, e = agent.NewEino(ctx, config("NICKLLM_BASE_URL"), config("NICKLLM_API_KEY"), model)
+			if e != nil {
+				return e
+			}
+			llmStatus = "agent_configured"
+		}
 	}
 	sttStatus := "not_configured"
 	if python := config("STT_PYTHON"); python != "" {

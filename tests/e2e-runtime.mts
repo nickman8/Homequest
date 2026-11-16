@@ -34,6 +34,7 @@ for (const file of [
   "plans-e2e-cards",
   "shopping-e2e-cards",
   "assistant-e2e-cards",
+  "agent-e2e-cards",
 ])
   for (const c of JSON.parse(fs.readFileSync(`.tools/${file}.json`, "utf8"))) {
     const key = JSON.stringify({
@@ -59,8 +60,10 @@ for (const title of [
   "Чередование дел",
   "Неделя нашего дома",
   "Проверьте покупки",
+  "Проверьте изменения",
+  "Помощник по дому",
 ]) {
-  const c = [...unique.values()].find((c) => c.title === title);
+  const c = [...unique.values()].find((c) => c.title === title && (title !== "Помощник по дому" || c.text.startsWith("Контекст:")));
   assert.ok(c, title);
   for (const width of [320, 390])
     for (const theme of ["dark", "custom"]) {
@@ -73,6 +76,8 @@ for (const title of [
               "Чередование дел": "rotation",
               "Неделя нашего дома": "weekly",
               "Проверьте покупки": "shopping",
+              "Проверьте изменения": "agent-plan",
+              "Помощник по дому": "agent-context",
             } as any
           )[title] +
           ".png";
@@ -96,5 +101,5 @@ for (const title of [
     }
 }
 console.log(
-  `PASS official runtime: ${n} distinct E2E projections at 200px + 16 new screen/theme/width combinations`,
+  `PASS official runtime: ${n} distinct E2E projections at 200px + 24 screen/theme/width combinations`,
 );
