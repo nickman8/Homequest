@@ -16,6 +16,7 @@ import (
 )
 
 type AIConsent struct {
+	Provider string
 	UserID   int64 `gorm:"primaryKey;autoIncrement:false"`
 	Accepted bool
 }
@@ -23,6 +24,7 @@ type AIConsent struct {
 func (AIConsent) TableName() string { return "hq_ai_consents" }
 
 type AIJob struct {
+	Provider   string
 	ID         uint `gorm:"primaryKey"`
 	Viewer     int64
 	CircleID   int
@@ -78,15 +80,15 @@ func (b *Bot) enqueueAI(uid int64, text, voice string) error {
 	var consent AIConsent
 	_ = b.DB.First(&consent, "user_id = ?", uid).Error
 	state := "queued"
-	if !consent.Accepted {
+	if !consent.Accepted || consent.Provider != b.AIProvider {
 		state = "consent"
 	}
-	job := AIJob{Viewer: uid, CircleID: h.ID, Text: text, VoiceID: voice, State: state, CreatedAt: b.Now()}
+	job := AIJob{Provider: b.AIProvider, Viewer: uid, CircleID: h.ID, Text: text, VoiceID: voice, State: state, CreatedAt: b.Now()}
 	if e = b.DB.Create(&job).Error; e != nil {
 		return e
 	}
 	if state == "consent" {
-		return b.card(uid, 0, "Помощник по дому", "Голос распознаётся локально. Если NickLLM доступен, текст и названия заданий передаются ему для понимания. Продолжить?", h.ID, fmt.Sprintf("ai_consent:%d", job.ID), "Понятно, продолжить", fmt.Sprintf("ai_cancel:%d", job.ID), "Отмена")
+		return b.card(uid, 0, "Помощник по дому", "Голос распознаётся локально. Если VyceAI доступен, текст и названия заданий передаются ему для понимания. Продолжить?", h.ID, fmt.Sprintf("ai_consent:%d", job.ID), "Понятно, продолжить", fmt.Sprintf("ai_cancel:%d", job.ID), "Отмена")
 	}
 	return b.say(uid, "Обрабатываю сообщение. Обычные кнопки доступны.")
 }
@@ -116,7 +118,10 @@ func (b *Bot) aiAction(uid, msg int64, a Action) (bool, error) {
 		if job.State != "consent" {
 			return true, b.home(uid, msg)
 		}
-		if e = b.DB.Save(&AIConsent{UserID: uid, Accepted: true}).Error; e != nil {
+		if job.Provider != b.AIProvider {
+			return true, b.say(uid, "Помощник обновился. Отправьте сообщение заново, чтобы подтвердить обработку текста.")
+		}
+		if e = b.DB.Save(&AIConsent{UserID: uid, Accepted: true, Provider: b.AIProvider}).Error; e != nil {
 			return true, e
 		}
 		if e = b.DB.Model(&job).Update("state", "queued").Error; e != nil {
@@ -165,6 +170,9 @@ func (b *Bot) ProcessAI(ctx context.Context) error {
 			return child.say(job.Viewer, "Помощник не смог безопасно обработать сообщение. Ничего не изменено; используйте кнопки или уточните фразу.")
 		})
 	}
+	if job.Provider != b.AIProvider {
+		return fail()
+	}
 	home, e := b.Family.View(job.Viewer, job.CircleID)
 	if e != nil {
 		return fail()
@@ -194,7 +202,7 @@ func (b *Bot) ProcessAI(ctx context.Context) error {
 			if _, e := child.Family.Authorize(job.Viewer, job.CircleID); e != nil {
 				return nil
 			}
-			return child.say(job.Viewer, "Распознано локально: "+short(job.Text, 1000)+"\nNickLLM пока недоступен: задания не изменены. Проверьте текст и используйте кнопки.")
+			return child.say(job.Viewer, "Распознано локально: "+short(job.Text, 1000)+"\nVyceAI пока недоступен: задания не изменены. Проверьте текст и используйте кнопки.")
 		})
 	}
 	if len(job.Text) > 4096 {

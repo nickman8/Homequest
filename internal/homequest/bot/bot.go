@@ -120,6 +120,7 @@ type Card struct {
 	Buttons []Button `json:"buttons"`
 }
 type Bot struct {
+	AIProvider      string
 	LLM             assistant.LLM
 	STT             assistant.STT
 	VoiceSource     VoiceSource

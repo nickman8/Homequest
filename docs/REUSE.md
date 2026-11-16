@@ -118,3 +118,14 @@ STT выполнен на локально синтезированном рус
 NickLLM models повторно HTTP 403. Точный model ID не задан, live completion,
 structured-output capability и end-to-end voice с выбранной LLM не подтверждены.
 Адаптер не выбирает альтернативную модель; JSON строго валидируется локально.
+
+## Переключение на VyceAI по запросу владельца
+
+Проверены https://vyceai.com/v1/models (200) и chat/completions (200).
+Подтверждён model ID `deepseek-4.1-flash-1017`; отображаемое имя не использовано
+как выдуманный slug. Gateway принял JSON Schema strict и вернул корректную команду.
+Реальный Go-адаптер прошёл completion/negation/future/draft и продуктовый путь
+с SQLite (controlled Telegram transport, реальная LLM). API URL теперь берётся
+из единственного NICKLLM_BASE_URL; legacy имена сохранены для совместимости.
+URL HTTPS-only, без userinfo/query; redirects отключены. Согласие привязано к
+провайдеру. Чужой SSH-сервер для этого переключения не менялся.

@@ -23,7 +23,7 @@
 - Manual-test Premium, серверная проверка режима/owner, отдельное entitlement.
 - AI/STT adapters и очередь: согласие, минимальный task-only контекст,
   ограниченный JSON, проверка IDs/версий/прав, подтверждение черновика/нескольких дел,
-  контролируемые fixtures. Живая выбранная LLM выключена до подтверждения model ID.
+  контролируемые fixtures. VyceAI подключён с проверенным model ID deepseek-4.1-flash-1017.
 
 ## Проверки и ограничения
 
@@ -34,14 +34,20 @@ E02 (9 layouts) + compatibility spike (9), 17 продуктовых layouts и 
 Полные E01–E13 на одном сквозном уровне пока не доказаны; подробности TEST_MATRIX.
 
 Telegram getMe: @Home_questbot, webhook отсутствует. Реальный клиент/нажатие
-ожидает пользовательского /start. NickLLM /models повторно **403**; точный ID
-DeepSeek 4.1 Flash, completion и structured output capability не подтверждены.
-Faster-whisper small CPU int8 загружен и выполнен на синтетическом русском аудио;
-качество не прошло смысловой критерий (искажение глагола). Нужна человеческая
-голосовая запись; успешный запуск движка не считается успешным voice-сценарием.
+ожидает пользовательского /start. По разрешению владельца gateway переключён
+на https://vyceai.com/v1: /models и completion HTTP 200, точный ID
+`deepseek-4.1-flash-1017`. JSON Schema accepted; реальный Go client прошёл 4
+семантических проверки и отдельный bot→real LLM→SQLite→одно начисление сценарий.
+Согласие привязано к gateway: прежнее согласие не переносится на новый автоматически.
+Прежние ошибки NickLLM 403/1010 и no_db_connection остаются историей диагностики,
+но больше не блокируют этот deployment. Старый сервер не изменялся.
+
+Faster-whisper small CPU int8 выполнен на синтетическом русском аудио; качество
+не прошло смысловой критерий (искажение глагола). Живая человеческая запись
+вместе с Telegram/NickLLM-совместимым API нового gateway ещё не проверена.
 
 Остаток продуктовой приёмки: полная визуальная проверка редких/длинных состояний, дополнительные связи E04–E13,
-live Telegram/Widgets/русский voice/NickLLM. Лимит карточек больше 100 снят; для
+live Telegram/Widgets/русский voice. Лимит карточек больше 100 снят; для
 крупных семей позже нужна SQL-пагинация вместо загрузки списка целиком.
 
 ## Среда и продолжение
@@ -54,7 +60,8 @@ DATA_DIR=/workspace/homequest-private/runtime; секреты вне Git с пр
 работают, HTTPS Git — нет. Новый PAT не создан и не нужен для публикации.
 Force:false, tree equality и secret scan. Отдельной base branch для draft PR нет.
 
-Продолжать с текущего checkout, без повторного выбора базы: прочитать STATUS и
-TEST_MATRIX, выполнить make test/harness, закрыть остаток приёмки. Для NickLLM:
-повторить scripts/preflight.py из среды с разрешённым провайдером доступом;
-только затем сохранить проверенный model ID и выполнить минимальный completion.
+Продолжать с текущего checkout, без повторного выбора базы: make test/harness,
+затем реальный /start и голосовой smoke. Opt-in live проверки провайдера:
+HOMEQUEST_LIVE_AI=1 HOMEQUEST_SECRETS_FILE=/absolute/private/secrets.json
+ go test ./internal/homequest/assistant ./internal/homequest/bot -run TestLive -count=1 -v.
+В CI эти тесты пропускаются; семейные данные и ключи в fixtures не используются.

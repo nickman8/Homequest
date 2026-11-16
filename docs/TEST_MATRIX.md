@@ -35,10 +35,17 @@ height ≤600; 3 обезличенных screenshots. E02 использует 
 - getMe/getWebhookInfo: HTTP 200, @Home_questbot, webhook отсутствует.
 - Polling и DB health проверены. Настоящий Telegram-клиент, карточка и callback
   ожидают пользовательского `/start`; найденные чаты не использовались для рассылки.
-- NickLLM GET /v1/models: HTTP 403, model ID неизвестен. Completion/structured outputs
-  не проверены, другая модель не подставлена.
+- Новый разрешённый VyceAI: /models и completion HTTP 200; точный ID
+  deepseek-4.1-flash-1017. TestLiveVyceAISemantics: 4/4 PASS через реальный Go client.
+  TestLiveGatewayCompletionThroughBot: PASS, реальная LLM + product handlers + SQLite,
+  Telegram transport controlled. JSON Schema strict принят; локальная валидация остаётся.
 - faster-whisper small CPU int8 реально загружен и запущен. Синтетическая русская
   речь распознана с искажением смысла/времени глагола: качество **не принято**.
   Первый замер 9.94 s, peak RSS 1,048,704 KiB. Живое человеческое voice ожидается.
 - При заблокированной LLM бот может показать только локальную транскрипцию;
   это не считается завершением задания голосом и не меняет баллы.
+
+Opt-in команда: HOMEQUEST_LIVE_AI=1 HOMEQUEST_SECRETS_FILE=/absolute/private/secrets.json
+ go test ./internal/homequest/assistant ./internal/homequest/bot -run TestLive -count=1 -v.
+В обычном CI live tests SKIP. TestConsentIsBoundToProvider и gateway configuration
+тесты проходят без внешних запросов. Реальный человеческий voice остаётся открытым.

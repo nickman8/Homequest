@@ -143,3 +143,21 @@ func TestE08E09AIUpdatesVoiceDraftAndReplay(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestConsentIsBoundToProvider(t *testing.T) {
+	db, _ := gorm.Open(sqlite.Open(t.TempDir()+"/provider-consent.db"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	b, _ := New(db, "<p>Дом</p>", "test")
+	b.LLM = &fixtureLLM{}
+	b.AIProvider = "https://new-gateway.example/v1"
+	_ = b.Family.Start(900001, "A")
+	_, _ = b.Family.Create(900001, "Дом", "UTC")
+	db.Create(&AIConsent{UserID: 900001, Accepted: true, Provider: "https://previous-gateway.example/v1"})
+	if e := b.enqueueAI(900001, "Я выкинул мусор", ""); e != nil {
+		t.Fatal(e)
+	}
+	var job AIJob
+	db.First(&job)
+	if job.State != "consent" {
+		t.Fatal("old provider consent reused")
+	}
+}

@@ -95,10 +95,11 @@ func run() error {
 		}
 		return secret[name]
 	}
+	app.AIProvider = config("NICKLLM_BASE_URL")
 	llmStatus := "model_not_verified"
-	if model := config("NICKLLM_MODEL"); model != "" && config("NICKLLM_API_KEY") != "" {
-		app.LLM = &assistant.NickLLM{Key: config("NICKLLM_API_KEY"), Model: model}
-		llmStatus = "configured_unverified"
+	if model := config("NICKLLM_MODEL"); model != "" && config("NICKLLM_API_KEY") != "" && config("NICKLLM_BASE_URL") != "" {
+		app.LLM = &assistant.NickLLM{Key: config("NICKLLM_API_KEY"), Model: model, BaseURL: config("NICKLLM_BASE_URL")}
+		llmStatus = "configured"
 	}
 	sttStatus := "not_configured"
 	if python := config("STT_PYTHON"); python != "" {
