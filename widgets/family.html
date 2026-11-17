@@ -180,11 +180,13 @@ function draw(){
  document.querySelector('.panel').className=title.length>35?'panel compact':'panel';
  var root=document.getElementById('buttons');root.textContent='';
  var narrow=window.innerWidth<240,buttons=s.buttons||[],size=title.length>35?(narrow?1:2):(narrow?3:Math.max(1,buttons.length));
- var text=Array.from(s.text||'Откройте /start, чтобы вернуться домой'),limit=narrow?60:180,textPages=Math.ceil(text.length/limit),pages=Math.max(textPages,Math.ceil(buttons.length/size));
+ var text=Array.from(s.text||'Откройте /start, чтобы вернуться домой'),limit=narrow?60:180,textPages=Math.ceil(text.length/limit),review=title==='Проверьте изменения',pages=review?textPages-1+Math.max(1,Math.ceil(buttons.length/size)):Math.max(textPages,Math.ceil(buttons.length/size));
  if(page>=pages)page=0;
  var textPage=Math.min(page,textPages-1);
  document.getElementById('text').textContent=(textPage?'…':'')+text.slice(textPage*limit,(textPage+1)*limit).join('')+(textPage+1<textPages?'…':'');
- buttons.slice(page*size,(page+1)*size).forEach(function(item){
+ var buttonPage=review?Math.max(0,page-textPages+1):page;
+ var visible=review&&page<textPages-1?buttons.filter(function(b){return b.label==='Отмена'}):buttons.slice(buttonPage*size,(buttonPage+1)*size);
+ visible.forEach(function(item){
   var b=document.createElement('button');b.textContent=item.label;
   b.onclick=function(){
    var version=serial;b.disabled=true;feedback('Отправляю…');

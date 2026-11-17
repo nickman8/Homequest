@@ -234,6 +234,14 @@ func (s *Service) Manage(tg int64, circle, id int, action string, target int) er
 				if tx.First(&m, "user_id = ? AND circle_id = ? AND is_active = ?", target, circle, true).Error != nil {
 					return family.ErrDenied
 				}
+				var rule Rule
+				err := tx.First(&rule, "chore_id=?", definition.ID).Error
+				if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+					return err
+				}
+				if rule.ReviewerID != nil && *rule.ReviewerID == target {
+					return errors.New("Исполнитель и проверяющий должны быть разными")
+				}
 				assigned = &target
 			}
 			e = tx.Model(&definition).Updates(map[string]any{"assigned_to": assigned, "assign_strategy": ch.AssignmentStrategyKeepLastAssigned}).Error

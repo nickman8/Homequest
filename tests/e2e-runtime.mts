@@ -36,6 +36,8 @@ for (const file of [
   "assistant-e2e-cards",
   "agent-e2e-cards",
   "agent-resources-e2e-cards",
+  "agent-review-cards",
+  "agent-recovery-cards",
 ])
   for (const c of JSON.parse(fs.readFileSync(`.tools/${file}.json`, "utf8"))) {
     const key = JSON.stringify({

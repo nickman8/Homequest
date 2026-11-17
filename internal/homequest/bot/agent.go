@@ -285,6 +285,17 @@ func (b *Bot) applyAgent(job *AIJob) error {
 	if e = b.DB.Model(job).Updates(map[string]any{"state": "done", "text": "", "voice_id": "", "command": "", "candidates": ""}).Error; e != nil {
 		return e
 	}
+	photos := 0
+	for _, effect := range effects {
+		if effect.Status == "photo" {
+			photos++
+		}
+	}
+	if photos > 1 {
+		if e = b.Family.SetStep(job.Viewer, "", ""); e != nil {
+			return e
+		}
+	}
 	refs := []int{}
 	for _, effect := range effects {
 		if strings.HasPrefix(effect.Operation, "task_") {
@@ -294,6 +305,9 @@ func (b *Bot) applyAgent(job *AIJob) error {
 			var a task.Attempt
 			if e = b.DB.First(&a, effect.AttemptID).Error; e != nil {
 				return e
+			}
+			if a.Status == "photo" && photos > 1 {
+				continue
 			}
 			if e = b.submitted(job.Viewer, 0, job.CircleID, a); e != nil {
 				return e
@@ -313,6 +327,9 @@ func (b *Bot) applyAgent(job *AIJob) error {
 	}
 	if e = b.awardBadges(job.Viewer); e != nil {
 		return e
+	}
+	if photos > 1 {
+		return b.card(job.Viewer, 0, "План применён", fmt.Sprintf("Изменений: %d.\nОтчётов без фото: %d. Откройте «Отчёты» и выберите задание перед отправкой фотографии.", len(effects), photos), job.CircleID, "reports", "Отчёты", "tasks", "Сегодня", "agent", "Помощник")
 	}
 	return b.card(job.Viewer, 0, "План применён", fmt.Sprintf("Изменений: %d.\n%s\nДля выполнения с фото или проверкой следуйте сообщению отчёта.", len(effects), c.Label()), job.CircleID, "tasks", "Сегодня", "reports", "Отчёты", "agent", "Помощник")
 }

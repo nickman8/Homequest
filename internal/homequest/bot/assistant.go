@@ -146,12 +146,18 @@ func (b *Bot) aiAction(uid, msg int64, a Action) (bool, error) {
 	}
 	switch p[0] {
 	case "ai_cancel":
+		if job.State != "consent" && job.State != "queued" && job.State != "processing" && job.State != "confirm" {
+			return true, b.say(uid, "Запрос уже завершён. Применённые изменения сохранены.")
+		}
 		if job.Agent && job.PlanID != "" {
 			if e = (&agent.Service{DB: b.DB}).Cancel(uid, job.PlanID, b.Now()); e != nil {
 				return true, e
 			}
 		}
-		return true, b.DB.Model(&job).Updates(map[string]any{"state": "cancelled", "text": "", "voice_id": "", "command": "", "candidates": ""}).Error
+		if e := b.DB.Model(&job).Updates(map[string]any{"state": "cancelled", "text": "", "voice_id": "", "command": "", "candidates": ""}).Error; e != nil {
+			return true, e
+		}
+		return true, b.say(uid, "Запрос отменён. Изменений не внесено.")
 	case "ai_consent":
 		if job.State != "consent" {
 			return true, b.home(uid, msg)

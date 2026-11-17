@@ -116,7 +116,7 @@ Go suite/build и plans HTML повторены. Live VyceAI eval 10/10 PASS (42
 | `TestAgentClarificationCannotConfirmAnOlderPlan` | Новая реплика/вопрос отменяет старое pending intent; последующее «да» не применяет старый план | PASS после воспроизведённого падения |
 | `tests/agent-e2e.mts` (в `make harness`) | Реальный HTML/Playwright → handlers → Eino tools → SQLite; две семьи, разные комнаты участников, batch/replay, голосовые fixtures, stale scope/versions, expiry, stop/reset | PASS, 67 состояний; Browser bridge, отдельно от настоящего Telegram |
 | `tests/agent-widget.mts` | Официальный QuickJS/DOM renderer: жест подтверждения → реальный request → handlers/SQLite → обновлённый state → rendering; создание в выбранной комнате и перенос; 200/320/390px dark | PASS, 6 связанных операций; модель offline, UI и domain реальные |
-| `tests/e2e-runtime.mts` | Все различные проекции шести HTML-путей, включая новые карточки агента, в официальном renderer; 200px плюс 24 theme/width комбинации | PASS, 180 различных проекций; изображения agent-plan/agent-context без пользовательских данных |
+| `tests/e2e-runtime.mts` | Все различные проекции восьми HTML-путей, включая новые карточки агента, в официальном renderer; 200px плюс 24 theme/width комбинации | PASS, 245 различных проекций; изображения agent-plan/agent-context без пользовательских данных |
 | `HQ_AGENT_LIVE=1 HOMEQUEST_SECRETS_FILE=/absolute/private/secrets.json go test ./internal/homequest/agent -run TestLiveEinoRoomPlan -count=1 -v` | Реальный VyceAI/DeepSeek → Eino tool calls → выбранная кухня при одинаковых названиях → preview/apply в временной SQLite | Первый запуск PASS 16.11.2026, 10.02s. Два последующих запроса — gateway timeout около 25s; минимальный completion также timeout. Нет production-записей, STT/Telegram не проверены |
 | `go test -race ./internal/homequest/agent/... ./internal/homequest/bot` | Гонки runtime, domain и handlers | PASS; после добавления конкурентного apply отдельно повторён agent race |
 
@@ -148,7 +148,7 @@ Live-проверки новой версии 16.11.2026: `TestLiveEinoRoomPlan`
 SQLite, без Telegram и STT. Первый проверяет выбранную комнату, второй — чтение
 каталога, snapshot, отсутствие списания до confirmation и идемпотентное списание.
 
-Итог локальных проверок этого этапа: `go test ./...` и
+Итог локальных проверок этапа 16 ноября: `go test ./...` и
 `go test -race ./internal/homequest/agent/... ./internal/homequest/bot` — PASS.
 Все ступени harness пройдены: 174 household + 101 plans + 80 shopping +
 43 legacy assistant + 67 room agent + 94 expanded agent = 559 HTML-состояний.
@@ -156,3 +156,48 @@ SQLite, без Telegram и STT. Первый проверяет выбранну
 agent HTML/linked/runtime ступени повторены: PASS. Официальный renderer:
 180 различных проекций на 200px, ещё 24 theme/width сочетания, 21 связанная
 операция агента. Это не live Telegram и не проверка человеческого аудио.
+
+## Независимое ревью: 24 дополнительных E2E (2026-11-17)
+
+Команды (используют сборку `bin/bot-probe` и `WIDGET_SANDBOX`):
+
+```sh
+$WIDGET_SANDBOX/node_modules/.bin/tsx tests/agent-review-regressions.mts
+$WIDGET_SANDBOX/node_modules/.bin/tsx tests/agent-recovery-e2e.mts
+```
+
+Обе включены в `make harness`; полученные карточки также идут в официальный
+renderer через `tests/e2e-runtime.mts`. JSON с именами/статусами сценариев находится
+в `.tools/agent-review-results.json` и `.tools/agent-recovery-results.json`.
+Количество сценариев считается отдельно от количества экранных состояний.
+
+| ID | Положительный путь / отрицательная проверка |
+|---|---|
+| REV01 | Реальная отмена не создаёт награду; старая отмена после apply сохраняет job.done и объект |
+| REV02 | Два фото именованно принимаются по одному; без выбора/после cancel/после перехода к соседнему отчёту снимок не привязывается |
+| REV03 | Сначала сменить reviewer, затем назначить и принять; конфликт assignee=reviewer отклоняется через агента и кнопку |
+| REV04 | Полный текст preview доступен на 200/320px; server-next/confirm отсутствуют до конца локального текста; отмена доступна |
+| REC01–02 | Отказ от consent → новая просьба → успех; duplicate update и confirmation не повторяют очередь/создание |
+| REC03–06 | Ошибка модели, timeout, некорректный JSON → никаких изменений/зависшего confirmation; ручная кнопка работает, агент восстанавливается |
+| REC07–09 | Ошибка STT; метаданные voice >60s/>4MiB отклонены до очереди; границы 60s/4MiB и голосовое подтверждение проходят с fixture STT |
+| REC10–12 | Поддельный snapshot; откат первого действия при ошибке второго; 10 изменений проходят, 11 не пишут ничего |
+| REC13–14 | Границы цены/HTML-подобный текст; две награды при недостаточном суммарном балансе не списываются частично; одна доступная выдаёт заявку |
+| REC15 | Два проверяющих подготовили разные решения: старый snapshot отклонён; свежий отказ возвращает исходную сумму один раз |
+| REC16–18 | Timezone/выход участника/явная смена дома инвалидируют старые планы; другие участники продолжают работу, исходные данные сохраняются |
+| REC19–20 | 21 позиция: чтение/покупка на второй странице; существующий, но не прочитанный ID, отрицательный и выходящий за границу offset отклонены |
+
+Уровень: Browser HTML E2E → настоящий Eino runtime/tools → product handlers →
+SQLite; процесс probe перезапускается на каждом запросе. Дополнительные поля probe —
+read-only oracles, успешные результаты в БД не подставляются. Стенд сериализует HTTP
+запросы; REC15 проверяет конфликт подготовленных планов, а настоящие конкурентные
+DB-транзакции покрывают Go/race tests. Это не live Telegram/LLM/STT и не оценка
+качества человеческого аудио. Независимое повторное ревью исправлений: PASS.
+
+Результат 17.11.2026: весь `make harness` PASS одним прогоном; REV01–04 PASS
+(100 состояний), REC01–20 PASS (96 состояний). Всего 174 + 101 + 80 + 42 + 67 +
+94 + 100 + 96 = 754 состояния восьми HTML-путей. Официальный runtime: 245
+различных проекций на 200px + 24 theme/width сочетания. Все Go tests и race
+`./internal/homequest/agent/... ./internal/homequest/bot ./internal/homequest/task`
+PASS. Старые suites пройдены повторно вместе с новыми; сокращение legacy assistant
+с 43 до 42 состояний связано с явным текстовым ответом при отмене вместо старой
+карточки. Live completion/человеческое аудио в этом прогоне не запускались.

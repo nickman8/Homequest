@@ -1,6 +1,6 @@
 // Linked official QuickJS/DOM gesture -> real Eino/bot -> SQLite -> new rendering.
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import {pathToFileURL} from 'node:url';import {execFileSync} from 'node:child_process';import assert from 'node:assert/strict';
-import {measureButtons} from './renderer-layout.mts';
+import {reachButton} from './renderer-layout.mts';
 const root=process.env.WIDGET_SANDBOX!;
 const {runWidget}=await import(pathToFileURL(path.join(root,'packages/core/scripts/sandbox-node.ts')).href);
 const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'homequest-agent-linked-'));
@@ -15,10 +15,9 @@ try{for(const width of [200,320,390]){
  const gesture=async()=>{
   while(!last.state.buttons.some((b:any)=>b.label==='Подтвердить план'))click('Следующая часть');
   const state=last.state;const data={chatData:JSON.stringify(state),publicData:null};
-  const layout=await measureButtons(runWidget,html,{width,data});
-  const button=layout.boxes.find((b:any)=>b.text==='Подтвердить план');assert.ok(button);
+  const {button,gestures}=await reachButton(runWidget,html,{width,data},'Подтвердить план');
   let changed:any;const step={data:{...data}};
-  const result=await runWidget(html,{width,layout:true,theme:'dark',context:{canQuery:true,backgroundQuery:true,chatType:'private',viewer:{id:900001,first_name:'A'}},data,gestures:[{kind:'tap',x:button.x+20,y:button.y+20}],onRequest(request:any){assert.equal(Buffer.byteLength(request.data),32);changed=call({action:request.data});step.data.chatData=JSON.stringify(changed.state);return {result:null}},script:[step],probes:["document.getElementById('title').textContent"]});
+  const result=await runWidget(html,{width,layout:true,theme:'dark',context:{canQuery:true,backgroundQuery:true,chatType:'private',viewer:{id:900001,first_name:'A'}},data,gestures:[...gestures,{kind:'tap',x:button.x+20,y:button.y+20}],onRequest(request:any){assert.equal(Buffer.byteLength(request.data),32);changed=call({action:request.data});step.data.chatData=JSON.stringify(changed.state);return {result:null}},script:[step],probes:["document.getElementById('title').textContent"]});
   assert.deepEqual(result.diags,[]);assert.equal(result.requests.length,1);assert.equal(changed.state.title,'План применён');
   const repeated=call({action:state.buttons.find((b:any)=>b.label==='Подтвердить план').action});assert.deepEqual(repeated.tasks_open,changed.tasks_open);assert.equal(repeated.balance,changed.balance);assert.equal(repeated.shopping_bought,changed.shopping_bought);
   return changed;

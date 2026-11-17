@@ -15,3 +15,17 @@ export async function measureButtons(runWidget:any,html:string,options:any){
  };
  try{const result=await runWidget(html,{...options,layout:true});return {...result,boxes}}finally{chromium.launch=launch}
 }
+
+// Reach an action with real local pagination gestures in the official renderer.
+export async function reachButton(runWidget:any,html:string,options:any,label:string){
+ const gestures:any[]=[];
+ for(let n=0;n<20;n++){
+  const layout=await measureButtons(runWidget,html,{...options,gestures});
+  const button=layout.boxes.find((b:any)=>b.text===label);
+  if(button)return {button,gestures,layout};
+  const next=layout.boxes.find((b:any)=>/^(Далее|Ещё действия) ·/.test(b.text));
+  if(!next)throw Error('Unreachable action: '+label);
+  gestures.push({kind:'tap',x:next.x+20,y:next.y+20});
+ }
+ throw Error('Local pagination exceeded its bound');
+}

@@ -29,6 +29,8 @@ harness: build widgets
 	WIDGET_SANDBOX=$(WIDGET_SANDBOX) $(WIDGET_SANDBOX)/node_modules/.bin/tsx tests/agent-widget.mts
 	WIDGET_SANDBOX=$(WIDGET_SANDBOX) $(WIDGET_SANDBOX)/node_modules/.bin/tsx tests/agent-e2e.mts
 	WIDGET_SANDBOX=$(WIDGET_SANDBOX) $(WIDGET_SANDBOX)/node_modules/.bin/tsx tests/agent-resources-e2e.mts
+	WIDGET_SANDBOX=$(WIDGET_SANDBOX) $(WIDGET_SANDBOX)/node_modules/.bin/tsx tests/agent-review-regressions.mts
+	WIDGET_SANDBOX=$(WIDGET_SANDBOX) $(WIDGET_SANDBOX)/node_modules/.bin/tsx tests/agent-recovery-e2e.mts
 	WIDGET_SANDBOX=$(WIDGET_SANDBOX) $(WIDGET_SANDBOX)/node_modules/.bin/tsx tests/e2e-runtime.mts
 dev: build
 	./scripts/dev.sh

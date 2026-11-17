@@ -4,7 +4,7 @@
 `/workspace/homequest-private/runtime/donetick.db`, секреты
 `/workspace/homequest-private/secrets.json` (0600), лог `bot.log` в private-каталоге.
 Никакие из этих приватных файлов не входят в Git. SQLite backup перед последним
-обновлением: `/workspace/homequest-private/runtime/before-agent-commerce-20261116.db`.
+обновлением: `/workspace/homequest-private/runtime/before-review-fixes-20261117.db`.
 
 Проверять health при каждом возобновлении. Код обновляется после тестов, с backup
 и остановкой только собственного polling consumer. Доступность после завершения
@@ -93,12 +93,12 @@ http://127.0.0.1:4173. Это loopback-стенд с временной SQLite �
 make migrate GO=/workspace/toolchains/go/bin/go`. Она завершается после миграций,
 не обращается в Telegram и не запускает workers. Повтор безопасен.
 
-Проверено 2026-11-16 около 16:39 UTC: запущена сборка расширенного агента;
+Проверено 2026-11-17: запущена сборка `838abe2` с исправлениями независимого ревью;
 health: database=ready, telegram=polling, scheduler=ready, ui=buttons,
-llm=agent_configured, stt=configured. Cloud session 9010, PID при запуске 332654;
-это не systemd service. До запуска предыдущий процесс уже завершился; новый
-consumer единственный. Создан приватный snapshot
-`/workspace/homequest-private/runtime/before-agent-commerce-20261116.db` (0600).
+llm=agent_configured, stt=configured. Cloud session 16348, PID при запуске 49937;
+это не systemd service. До запуска старого процесса не было; consumer единственный.
+Приватный snapshot перед миграцией:
+`/workspace/homequest-private/runtime/before-review-fixes-20261117.db` (0600).
 Миграции и запуск на существующей БД успешны, getMe/webhook/models HTTP 200,
 webhook отсутствует. Cloud-процесс может остановиться вместе со средой:
 проверять health перед использованием. Человеческий voice smoke ещё не выполнен.

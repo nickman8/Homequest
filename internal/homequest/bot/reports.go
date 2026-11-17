@@ -11,10 +11,7 @@ import (
 func (b *Bot) submitted(uid, msg int64, circle int, a task.Attempt) error {
 	switch a.Status {
 	case "photo":
-		if e := b.Family.SetStep(uid, "photo_attach", strconv.Itoa(a.ID)); e != nil {
-			return e
-		}
-		return b.say(uid, "Пришлите фотографию отчёта обычным фото в этот чат. /cancel завершит диалог; отчёт останется в разделе «Отчёты».")
+		return b.promptPhoto(uid, circle, a.ID)
 	case "review":
 		if e := b.PlanReviews(); e != nil {
 			return e
@@ -211,7 +208,9 @@ func (b *Bot) reportAction(uid, msg int64, a Action) (bool, error) {
 			return true, b.say(uid, e.Error())
 		}
 		return true, b.tasks(uid, msg, 0)
-	case "photo_submit", "photo_attach":
+	case "photo_attach":
+		return true, b.promptPhoto(uid, a.CircleID, id)
+	case "photo_submit":
 		if e := b.Family.SetStep(uid, parts[0], strconv.Itoa(id)); e != nil {
 			return true, e
 		}
@@ -233,34 +232,83 @@ func (b *Bot) reportAction(uid, msg int64, a Action) (bool, error) {
 		}
 		return true, b.queue("sendPhoto", map[string]any{"chat_id": uid, "photo": file, "caption": "Фотоотчёт"})
 	case "reports":
-		return true, b.reports(uid, msg, a.CircleID)
+		return true, b.reportsPage(uid, msg, a.CircleID, id)
 	}
 	return false, nil
 }
-func (b *Bot) reports(uid, msg int64, circle int) error {
+func (b *Bot) promptPhoto(uid int64, circle, id int) error {
+	user, e := b.Family.Authorize(uid, circle)
+	if e != nil {
+		return e
+	}
+	var subject struct {
+		Name string
+		ID   int
+	}
+	e = b.DB.Table("hq_attempts a").Select("a.id, chores.name").Joins("JOIN hq_task_instances i ON i.id=a.instance_id").Joins("JOIN chores ON chores.id=i.chore_id").Where("a.id=? AND a.user_id=? AND a.status=? AND i.circle_id=?", id, user.ID, "photo", circle).Take(&subject).Error
+	if e != nil {
+		return b.say(uid, "Этот отчёт больше не ожидает фото. Откройте раздел «Отчёты».")
+	}
+	if e = b.Family.SetStep(uid, "photo_attach", strconv.Itoa(id)); e != nil {
+		return e
+	}
+	return b.say(uid, "Пришлите фотографию отчёта «"+subject.Name+"» обычным фото в этот чат. /cancel завершит диалог; отчёт останется в разделе «Отчёты».")
+}
+func (b *Bot) reports(uid, msg int64, circle int) error { return b.reportsPage(uid, msg, circle, 0) }
+func (b *Bot) reportsPage(uid, msg int64, circle, page int) error {
+	// Browsing reports ends a prior photo selection; another upload needs an
+	// explicit named target, including callbacks on an older report card.
+	step, e := b.Family.Step(uid)
+	if e != nil {
+		return e
+	}
+	if step.Step == "photo_attach" {
+		if e = b.Family.SetStep(uid, "", ""); e != nil {
+			return e
+		}
+	}
+
 	user, e := b.Family.Authorize(uid, circle)
 	if e != nil {
 		return e
 	}
 	var rows []task.Attempt
 	e = b.DB.Table("hq_attempts a").Select("a.*").Joins("JOIN hq_task_instances i ON i.id = a.instance_id").Where("i.circle_id = ? AND ((a.status = ? AND a.user_id = ?) OR (a.status = ? AND a.user_id != ?))", circle, "photo", user.ID, "review", user.ID).Order("a.id").Find(&rows).Error
-	var a task.Attempt
+	eligible := []task.Attempt{}
 	for _, row := range rows {
 		if row.Status == "photo" || task.CanReview(b.DB, row, circle, user.ID) {
-			a = row
-			break
+			eligible = append(eligible, row)
 		}
 	}
-	if e != nil || a.ID == 0 {
+	if e != nil {
+		return e
+	}
+	if len(eligible) == 0 {
 		return b.card(uid, msg, "Отчёты", "Сейчас нет отчётов, требующих вашего действия.", circle, "home", "Дом")
 	}
+	if page < 0 || page >= len(eligible) {
+		page = 0
+	}
+	a := eligible[page]
+	next := []string{}
+	if len(eligible) > 1 {
+		next = []string{fmt.Sprintf("reports:%d", (page+1)%len(eligible)), "Следующий отчёт"}
+	}
 	if a.Status == "photo" {
-		return b.card(uid, msg, "Ожидает фотографии", "Ваше выполнение ещё не отправлено. Прикрепите фото.", circle, fmt.Sprintf("photo_attach:%d", a.ID), "Добавить фото", "home", "Дом")
+		var subject struct{ Name string }
+		if e = b.DB.Table("chores").Select("chores.name").Joins("JOIN hq_task_instances i ON i.chore_id=chores.id").Where("i.id=? AND i.circle_id=?", a.InstanceID, circle).Take(&subject).Error; e != nil {
+			return e
+		}
+		opts := []string{fmt.Sprintf("photo_attach:%d", a.ID), "Добавить фото"}
+		opts = append(opts, next...)
+		opts = append(opts, "home", "Дом")
+		return b.card(uid, msg, "Ожидает фотографии", short(subject.Name, 65)+"\nВыберите этот отчёт, затем пришлите фото.", circle, opts...)
 	}
 	opts := []string{fmt.Sprintf("approve:%d", a.ID), "Принять", fmt.Sprintf("reject:%d", a.ID), "Отклонить"}
 	if a.PhotoID != "" {
 		opts = append(opts, fmt.Sprintf("view_photo:%d", a.ID), "Посмотреть фото")
 	}
+	opts = append(opts, next...)
 	opts = append(opts, "home", "Дом")
 	var subject struct {
 		Name        string

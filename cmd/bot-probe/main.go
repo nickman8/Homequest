@@ -7,10 +7,12 @@ import (
 	"donetick.com/core/internal/homequest/agent/agenttest"
 	"donetick.com/core/internal/homequest/assistant"
 	"donetick.com/core/internal/homequest/bot"
+	"donetick.com/core/internal/homequest/reward"
 	"donetick.com/core/internal/homequest/shopping"
 	"donetick.com/core/internal/homequest/stats"
 	"donetick.com/core/internal/homequest/task"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -36,19 +38,22 @@ func main() {
 		os.Exit(1)
 	}
 	var input struct {
-		Viewer       int64              `json:"viewer"`
-		Text         string             `json:"text"`
-		Action       string             `json:"action"`
-		UpdateID     int64              `json:"update_id"`
-		Photo        string             `json:"photo"`
-		Now          string             `json:"now"`
-		BillingMode  string             `json:"billing_mode"`
-		Tick         bool               `json:"tick"`
-		AgentFixture *agenttest.Model   `json:"agent_fixture"`
-		AICommand    *assistant.Command `json:"ai_command"`
-		Speech       string             `json:"speech"`
-		Voice        bool               `json:"voice"`
-		ProcessAI    bool               `json:"process_ai"`
+		VoiceDuration int                `json:"voice_duration"`
+		VoiceSize     int                `json:"voice_size"`
+		SpeechFailure bool               `json:"speech_failure"`
+		Viewer        int64              `json:"viewer"`
+		Text          string             `json:"text"`
+		Action        string             `json:"action"`
+		UpdateID      int64              `json:"update_id"`
+		Photo         string             `json:"photo"`
+		Now           string             `json:"now"`
+		BillingMode   string             `json:"billing_mode"`
+		Tick          bool               `json:"tick"`
+		AgentFixture  *agenttest.Model   `json:"agent_fixture"`
+		AICommand     *assistant.Command `json:"ai_command"`
+		Speech        string             `json:"speech"`
+		Voice         bool               `json:"voice"`
+		ProcessAI     bool               `json:"process_ai"`
 	}
 	if json.NewDecoder(os.Stdin).Decode(&input) != nil {
 		os.Exit(2)
@@ -62,7 +67,7 @@ func main() {
 	}
 	if input.AgentFixture != nil {
 		app.Agent = &agent.Eino{Model: input.AgentFixture}
-		speech := &fixtureAI{Speech: input.Speech}
+		speech := &fixtureAI{Speech: input.Speech, Failure: input.SpeechFailure}
 		app.STT = speech
 		app.VoiceSource = speech
 		app.AIProvider = "fixture"
@@ -98,7 +103,7 @@ func main() {
 		update.Message = &m
 	}
 	if input.Voice {
-		update.Message = &bot.Message{From: bot.Person{ID: input.Viewer, Name: "Участник"}, Chat: bot.Chat{ID: input.Viewer, Type: "private"}, Voice: &bot.Voice{FileID: "fixture_audio", Duration: 3}}
+		update.Message = &bot.Message{From: bot.Person{ID: input.Viewer, Name: "Участник"}, Chat: bot.Chat{ID: input.Viewer, Type: "private"}, Voice: &bot.Voice{FileID: "fixture_audio", Duration: input.VoiceDuration, Size: input.VoiceSize}}
 	}
 	transport := &captureAPI{}
 	if input.Tick {
@@ -140,6 +145,8 @@ func main() {
 	needed, boughtCount := 0, 0
 	var openTasks any
 	var members any
+	var purchasesView, catalog, redemptions any
+	attempts := []map[string]any{}
 	if h, e := app.Family.Current(input.Viewer); e == nil {
 		familyID = h.ID
 		members = h.Members
@@ -148,12 +155,27 @@ func main() {
 		needed = len(purchases)
 		bought, _ := (&shopping.Service{DB: db}).List(input.Viewer, h.ID, true)
 		boughtCount = len(bought)
+		purchasesView = append(purchases, bought...)
+		catalog, _ = (&reward.Service{DB: db}).List(input.Viewer, h.ID)
+		redemptions, _ = (&reward.Service{DB: db}).Requests(input.Viewer, h.ID)
+		var rows []task.Attempt
+		db.Table("hq_attempts a").Select("a.*").Joins("JOIN hq_task_instances i ON i.id=a.instance_id").Where("i.circle_id=?", h.ID).Order("a.id").Find(&rows)
+		for _, a := range rows {
+			attempts = append(attempts, map[string]any{"id": a.ID, "instance_id": a.InstanceID, "user_id": a.UserID, "status": a.Status, "has_photo": a.PhotoID != ""})
+		}
 		balance, _ = (&task.Service{DB: db}).Balance(input.Viewer, h.ID)
 		summary, _ = (&stats.Service{DB: db}).Summary(input.Viewer, h.ID, app.Now())
 	}
+	// Read-only test oracles; no fixture writes of successful domain outcomes.
+	var jobs []struct {
+		ID     uint
+		State  string
+		PlanID string
+	}
+	db.Model(&bot.AIJob{}).Where("viewer=?", input.Viewer).Order("id").Find(&jobs)
 	var deliveries []bot.Delivery
 	db.Where("viewer=? AND id>?", input.Viewer, before).Order("id").Find(&deliveries)
-	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"tasks_open": openTasks, "members": members, "shopping_needed": needed, "shopping_bought": boughtCount, "sent": transport.Sent, "deliveries": deliveries, "state": state, "payload": payload, "balance": balance, "week": summary.Week, "xp": summary.XP, "family_id": familyID, "update_id": input.UpdateID, "at": app.Now()})
+	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"ai_jobs": jobs, "attempts": attempts, "shopping_items": purchasesView, "reward_catalog": catalog, "redemptions": redemptions, "tasks_open": openTasks, "members": members, "shopping_needed": needed, "shopping_bought": boughtCount, "sent": transport.Sent, "deliveries": deliveries, "state": state, "payload": payload, "balance": balance, "week": summary.Week, "xp": summary.XP, "family_id": familyID, "update_id": input.UpdateID, "at": app.Now()})
 }
 
 type captureAPI struct{ Sent []map[string]any }
@@ -167,6 +189,7 @@ func (a *captureAPI) Call(_ context.Context, method string, payload any, out any
 }
 
 type fixtureAI struct {
+	Failure bool
 	Command assistant.Command
 	Speech  string
 }
@@ -174,7 +197,12 @@ type fixtureAI struct {
 func (f *fixtureAI) Parse(context.Context, string, []assistant.Candidate, string) (assistant.Command, error) {
 	return f.Command, nil
 }
-func (f *fixtureAI) Transcribe(context.Context, []byte) (string, error) { return f.Speech, nil }
+func (f *fixtureAI) Transcribe(context.Context, []byte) (string, error) {
+	if f.Failure {
+		return "", errors.New("fixture speech unavailable")
+	}
+	return f.Speech, nil
+}
 func (f *fixtureAI) Voice(context.Context, string) ([]byte, error) {
 	return []byte("controlled fixture audio"), nil
 }
