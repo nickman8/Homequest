@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+var ErrInsufficient = errors.New("Пока не хватает баллов")
+
 const Delivered = r.RedemptionStatusDelivered
 const Cancelled = r.RedemptionStatusCancelled
 
@@ -115,7 +117,7 @@ func (s *Service) Request(tg int64, circle, id int, key string, now time.Time) (
 			return e
 		}
 		if balance < reward.PointsCost {
-			return errors.New("Пока не хватает баллов")
+			return ErrInsufficient
 		}
 		out = r.RewardRedemption{RewardID: id, CircleID: circle, UserID: user.ID, RewardName: reward.Name, PointsCost: reward.PointsCost, Status: r.RedemptionStatusPending, RequestedAt: now.UTC()}
 		if e = tx.Create(&out).Error; e != nil {

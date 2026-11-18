@@ -11,11 +11,16 @@ import (
 	"donetick.com/core/internal/homequest/family"
 	"donetick.com/core/internal/homequest/reward"
 	"donetick.com/core/internal/homequest/shopping"
+	"donetick.com/core/internal/homequest/task"
+	"donetick.com/core/internal/homequest/wishlist"
 )
 
 // Resource is an explicit model projection. No Telegram identity, receipt key,
 // family ID, media URL or surprise-gift information enters tool output.
 type Resource struct {
+	HasPhoto    bool   `json:"has_photo,omitempty"`
+	Link        string `json:"link,omitempty"`
+	Price       string `json:"price,omitempty"`
 	ID          int    `json:"id"`
 	Kind        string `json:"kind"`
 	Snapshot    string `json:"snapshot"`
@@ -36,17 +41,69 @@ func snapshot(v any) string {
 	return hex.EncodeToString(sum[:])
 }
 func resourceTarget(kind string) bool {
-	return kind == "shopping" || kind == "reward" || kind == "redemption"
+	return kind == "handoff" || kind == "report" || kind == "room" || kind == "wish" || kind == "shopping" || kind == "reward" || kind == "redemption"
 }
 func (s *Service) Resources(c Context, kind string, now time.Time) ([]Resource, error) {
 	if e := s.Check(c, now); e != nil {
 		return nil, e
 	}
-	return s.resources(c.Viewer, c.CircleID, kind)
+	return s.resources(c.Viewer, c.CircleID, kind, now)
 }
-func (s *Service) resources(uid int64, circle int, kind string) ([]Resource, error) {
+func (s *Service) resources(uid int64, circle int, kind string, now time.Time) ([]Resource, error) {
 	out := []Resource{}
 	switch kind {
+	case "handoff":
+		rows, e := (&task.Service{DB: s.DB}).Handoffs(uid, circle, now)
+		if e != nil {
+			return nil, e
+		}
+		for _, row := range rows {
+			var name string
+			if e = s.DB.Table("chores").Select("chores.name").Joins("JOIN hq_task_instances i ON i.chore_id=chores.id").Where("i.id=? AND i.circle_id=?", row.InstanceID, circle).Scan(&name).Error; e != nil {
+				return nil, e
+			}
+			out = append(out, Resource{ID: row.ID, Kind: kind, Status: row.Status, Name: name, CreatedBy: row.FromID, Requester: row.ToID, Snapshot: snapshot(row)})
+		}
+	case "report":
+		user, e := (&family.Service{DB: s.DB}).Authorize(uid, circle)
+		if e != nil {
+			return nil, e
+		}
+		var rows []struct {
+			task.Attempt
+			Award int
+			Name  string
+		}
+		e = s.DB.Table("hq_attempts a").Select("a.*, chores.name, COALESCE(hist.points, 0) AS award").Joins("JOIN chore_histories hist ON hist.id=a.history_id").Joins("JOIN hq_task_instances i ON i.id=a.instance_id JOIN chores ON chores.id=i.chore_id").Where("i.circle_id=? AND (a.user_id=? OR a.status=?)", circle, user.ID, "review").Order("a.id DESC").Scan(&rows).Error
+		if e != nil {
+			return nil, e
+		}
+		for _, row := range rows {
+			if row.UserID != user.ID && !task.CanReview(s.DB, row.Attempt, circle, user.ID) {
+				continue
+			}
+			r := Resource{ID: row.ID, Kind: kind, Name: row.Name, Points: row.Award, Status: row.Status, CreatedBy: row.UserID, HasPhoto: row.PhotoID != ""}
+			r.Snapshot = snapshot(r)
+			out = append(out, r)
+		}
+	case "room":
+		rooms, e := (&task.Service{DB: s.DB}).Rooms(uid, circle)
+		if e != nil {
+			return nil, e
+		}
+		for _, r := range rooms {
+			out = append(out, Resource{ID: r.ID, Name: r.Name, Kind: kind, Status: "active", Snapshot: snapshot(r)})
+		}
+	case "wish":
+		rows, e := (&wishlist.Service{DB: s.DB}).List(uid, circle)
+		if e != nil {
+			return nil, e
+		}
+		for _, r := range rows {
+			// Reservations stay private even in the donor's model context.
+			r.Claim = nil
+			out = append(out, Resource{ID: r.ID, Kind: kind, Snapshot: snapshot(r), Status: "active", CreatedBy: r.UserID, Name: r.Name, Description: r.Note, Price: r.Price, Link: r.URL})
+		}
 	case "shopping":
 		sh := &shopping.Service{DB: s.DB}
 		for _, bought := range []bool{false, true} {
@@ -80,12 +137,12 @@ func (s *Service) resources(uid int64, circle int, kind string) ([]Resource, err
 	}
 	return out, nil
 }
-func (s *Service) resource(p Plan, v Change) (Resource, error) {
+func (s *Service) resource(p Plan, v Change, now time.Time) (Resource, error) {
 	cap, ok := capability(v.Operation)
 	if !ok || !resourceTarget(cap.Target) {
 		return Resource{}, ErrPlan
 	}
-	rows, e := s.resources(p.Viewer, p.CircleID, cap.Target)
+	rows, e := s.resources(p.Viewer, p.CircleID, cap.Target, now)
 	if e != nil {
 		return Resource{}, e
 	}
@@ -101,6 +158,39 @@ func (s *Service) executeResource(p Plan, v Change, index int, now time.Time) (E
 	rw := &reward.Service{DB: s.DB}
 	var e error
 	switch v.Operation {
+	case "handoff_accept", "handoff_decline", "handoff_cancel":
+		e = (&task.Service{DB: s.DB}).ResolveHandoff(p.Viewer, p.CircleID, v.ID, strings.TrimPrefix(v.Operation, "handoff_"), now)
+	case "report_approve", "report_reject":
+		e = (&task.Service{DB: s.DB}).Review(p.Viewer, p.CircleID, v.ID, v.Operation == "report_approve", now)
+	case "report_undo":
+		e = (&task.Service{DB: s.DB}).Undo(p.Viewer, p.CircleID, v.ID, now)
+	case "report_photo":
+		_, e = (&task.Service{DB: s.DB}).Photo(p.Viewer, p.CircleID, v.ID)
+	case "room_delete", "room_rename":
+		rooms := &task.Service{DB: s.DB}
+		if v.Operation == "room_delete" {
+			e = rooms.DeleteRoom(p.Viewer, p.CircleID, v.ID)
+		} else {
+			e = rooms.RenameRoom(p.Viewer, p.CircleID, v.ID, v.Name)
+		}
+	case "wish_create":
+		r, err := (&wishlist.Service{DB: s.DB}).Create(p.Viewer, p.CircleID, v.Name, v.Link, v.Description, v.Price)
+		out.ID, out.Status, e = r.ID, "created", err
+	case "wish_edit", "wish_archive":
+		ws := &wishlist.Service{DB: s.DB}
+		r, err := ws.Owned(p.Viewer, p.CircleID, v.ID)
+		if err != nil {
+			return out, err
+		}
+		if v.Operation == "wish_edit" {
+			e = ws.Edit(p.Viewer, p.CircleID, v.ID, r.Version, v.Name, v.Link, v.Description, v.Price)
+		} else {
+			e = ws.Archive(p.Viewer, p.CircleID, v.ID, r.Version)
+		}
+	case "wish_claim":
+		e = (&wishlist.Service{DB: s.DB}).Claim(p.Viewer, p.CircleID, v.ID)
+	case "wish_purchase", "wish_release":
+		e = (&wishlist.Service{DB: s.DB}).UpdateClaim(p.Viewer, p.CircleID, v.ID, strings.TrimPrefix(v.Operation, "wish_"))
 	case "reward_create":
 		r, err := rw.Create(p.Viewer, p.CircleID, v.Name, v.Description, v.Points)
 		e = err
@@ -135,17 +225,32 @@ func (s *Service) executeResource(p Plan, v Change, index int, now time.Time) (E
 	}
 	return out, e
 }
-func (s *Service) describeResource(p Plan, v Change) (string, error) {
+func (s *Service) describeResource(p Plan, v Change, now time.Time) (string, error) {
+	if v.Operation == "wish_create" {
+		return "Добавить желание «" + v.Name + "» " + strings.Join([]string{v.Description, v.Link, v.Price}, " "), nil
+	}
 	if v.Operation == "reward_create" {
 		return fmt.Sprintf("Добавить награду «%s» · %d баллов · %s", v.Name, v.Points, v.Description), nil
 	}
-	r, e := s.resource(p, v)
+	r, e := s.resource(p, v, now)
 	if e != nil {
 		return "", e
 	}
-	label := map[string]string{"shopping_claim": "Взять покупку на себя", "shopping_release": "Освободить покупку", "shopping_buy": "Отметить купленным", "shopping_reopen": "Вернуть в список покупок", "shopping_archive": "Убрать из списка покупок", "shopping_edit": "Изменить покупку", "reward_edit": "Изменить награду", "reward_archive": "Убрать награду из каталога", "reward_request": "Запросить награду", "redemption_approve": "Принять заявку", "redemption_deliver": "Отметить выдачу награды", "redemption_reject": "Отклонить заявку", "redemption_cancel": "Отменить заявку"}[v.Operation]
+	label := map[string]string{"room_rename": "Переименовать комнату", "room_delete": "Удалить комнату, сохранив задания", "wish_edit": "Изменить желание", "wish_archive": "Убрать желание", "wish_claim": "Тайно забронировать", "wish_release": "Снять свою бронь", "wish_purchase": "Отметить покупку подарка", "shopping_claim": "Взять покупку на себя", "shopping_release": "Освободить покупку", "shopping_buy": "Отметить купленным", "shopping_reopen": "Вернуть в список покупок", "shopping_archive": "Убрать из списка покупок", "shopping_edit": "Изменить покупку", "reward_edit": "Изменить награду", "reward_archive": "Убрать награду из каталога", "reward_request": "Запросить награду", "redemption_approve": "Принять заявку", "redemption_deliver": "Отметить выдачу награды", "redemption_reject": "Отклонить заявку", "redemption_cancel": "Отменить заявку"}[v.Operation]
+	if strings.HasPrefix(v.Operation, "handoff_") {
+		cap, _ := capability(v.Operation)
+		return fmt.Sprintf("%s · «%s» · предложение №%d", cap.Description, r.Name, r.ID), nil
+	}
+	if strings.HasPrefix(v.Operation, "report_") {
+		cap, _ := capability(v.Operation)
+		return fmt.Sprintf("%s · «%s» · отчёт №%d · %d баллов", cap.Description, r.Name, r.ID, r.Points), nil
+	}
 	text := label + ": «" + r.Name + "»"
 	switch v.Operation {
+	case "room_rename":
+		text += " → " + v.Name
+	case "wish_edit":
+		text += " → " + strings.Join([]string{v.Name, v.Description, v.Link, v.Price}, " ")
 	case "shopping_edit":
 		if len(v.Items) != 1 {
 			return "", ErrPlan

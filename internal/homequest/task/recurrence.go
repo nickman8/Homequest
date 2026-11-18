@@ -18,6 +18,18 @@ type Schedule struct {
 	Minute int
 }
 
+// Donetick stores the configured clock as RFC3339. Choose a date on which
+// the requested local minute exists, independently of the first due date.
+func scheduleClock(date time.Time, hour, minute int, loc *time.Location) time.Time {
+	for {
+		t := time.Date(date.Year(), date.Month(), date.Day(), hour, minute, 0, 0, loc)
+		if t.Hour() == hour && t.Minute() == minute {
+			return t
+		}
+		date = date.AddDate(0, 0, -1)
+	}
+}
+
 func (s *Service) SetSchedule(tg int64, circle, id int, rule Schedule, now time.Time) error {
 	if rule.Hour < 0 || rule.Hour > 23 || rule.Minute < 0 || rule.Minute > 59 {
 		return errors.New("Некорректное время")
@@ -48,8 +60,8 @@ func (s *Service) SetSchedule(tg int64, circle, id int, rule Schedule, now time.
 			return e
 		}
 		local := now.In(loc)
-		base := time.Date(local.Year(), local.Month(), local.Day(), rule.Hour, rule.Minute, 0, 0, loc).AddDate(0, 0, -1)
-		definition.FrequencyMetadataV2 = &ch.FrequencyMetadata{Timezone: home.Timezone, Time: base.Format(time.RFC3339)}
+		base := time.Date(local.Year(), local.Month(), local.Day()-1, 12, 0, 0, 0, loc)
+		definition.FrequencyMetadataV2 = &ch.FrequencyMetadata{Timezone: home.Timezone, Time: scheduleClock(base, rule.Hour, rule.Minute, loc).Format(time.RFC3339)}
 		definition.NextDueDate = &base
 		definition.IsRolling = false
 		switch rule.Mode {
@@ -185,11 +197,7 @@ func (s *Service) ChangeTimezone(tg int64, zone string) error {
 					return e
 				}
 				t = t.In(oldLoc)
-				v, e := scheduler.ResolveLocalTime(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), loc)
-				if e != nil {
-					return e
-				}
-				meta.Time = v.In(loc).Format(time.RFC3339)
+				meta.Time = scheduleClock(t, t.Hour(), t.Minute(), loc).Format(time.RFC3339)
 			}
 			var due *time.Time
 			if instance.DueAt != nil {

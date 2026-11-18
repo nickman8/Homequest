@@ -2,6 +2,8 @@ package bot
 
 import (
 	"donetick.com/core/internal/homequest/billing"
+	"donetick.com/core/internal/homequest/stats"
+	"errors"
 	"fmt"
 )
 
@@ -33,21 +35,12 @@ func (b *Bot) premium(uid, msg int64, circle int) error {
 
 // The entitlement check is server-side, including direct calls to this handler.
 func (b *Bot) premiumStats(uid, msg int64, circle int) error {
-	active, e := (&billing.Service{DB: b.DB, Mode: b.BillingMode}).Active(uid, circle, b.Now())
-	if e != nil || !active {
+	counts, e := (&stats.Service{DB: b.DB}).Extended(uid, circle, b.Now())
+	if errors.Is(e, stats.ErrPremium) {
 		return b.say(uid, "Расширенный вклад доступен с тестовым Premium.")
 	}
-	var rows []struct {
-		Status string
-		Count  int
-	}
-	e = b.DB.Table("hq_attempts a").Select("a.status, COUNT(*) AS count").Joins("JOIN hq_task_instances i ON i.id = a.instance_id").Where("i.circle_id = ?", circle).Group("a.status").Scan(&rows).Error
 	if e != nil {
 		return e
-	}
-	counts := map[string]int{}
-	for _, r := range rows {
-		counts[r.Status] = r.Count
 	}
 	return b.card(uid, msg, "Вклад дома подробнее", fmt.Sprintf("За всё время\nПринято: %d\nОжидают фото: %d\nОжидают проверки: %d\nПовторные попытки: %d", counts["accepted"], counts["photo"], counts["review"], counts["rejected"]), circle, "premium", "Назад")
 }

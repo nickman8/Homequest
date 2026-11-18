@@ -38,6 +38,8 @@ func main() {
 		os.Exit(1)
 	}
 	var input struct {
+		ReplyActions  []string           `json:"reply_actions"`
+		ReplySender   string             `json:"reply_sender"`
 		VoiceDuration int                `json:"voice_duration"`
 		VoiceSize     int                `json:"voice_size"`
 		SpeechFailure bool               `json:"speech_failure"`
@@ -105,6 +107,20 @@ func main() {
 	if input.Voice {
 		update.Message = &bot.Message{From: bot.Person{ID: input.Viewer, Name: "Участник"}, Chat: bot.Chat{ID: input.Viewer, Type: "private"}, Voice: &bot.Voice{FileID: "fixture_audio", Duration: input.VoiceDuration, Size: input.VoiceSize}}
 	}
+	if len(input.ReplyActions) > 0 && update.Message != nil {
+		sender := input.ReplySender
+		if sender == "" {
+			sender = "test_homequest_bot"
+		}
+		rows := [][]map[string]string{{}}
+		for _, token := range input.ReplyActions {
+			rows[0] = append(rows[0], map[string]string{"callback_data": token})
+		}
+		raw, _ := json.Marshal(map[string]any{"reply_to_message": map[string]any{"from": map[string]any{"is_bot": true, "username": sender}, "reply_markup": map[string]any{"inline_keyboard": rows}}})
+		var reply bot.Message
+		_ = json.Unmarshal(raw, &reply)
+		update.Message.Reply = reply.Reply
+	}
 	transport := &captureAPI{}
 	if input.Tick {
 		e = app.PlanWeekly()
@@ -168,9 +184,10 @@ func main() {
 	}
 	// Read-only test oracles; no fixture writes of successful domain outcomes.
 	var jobs []struct {
-		ID     uint
-		State  string
-		PlanID string
+		ReplyTarget agent.ReplyTarget `gorm:"embedded;embeddedPrefix:reply_target_"`
+		ID          uint
+		State       string
+		PlanID      string
 	}
 	db.Model(&bot.AIJob{}).Where("viewer=?", input.Viewer).Order("id").Find(&jobs)
 	var deliveries []bot.Delivery

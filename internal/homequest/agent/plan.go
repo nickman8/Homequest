@@ -8,29 +8,43 @@ import (
 	"time"
 
 	ch "donetick.com/core/internal/chore/model"
+	"donetick.com/core/internal/homequest/billing"
 	"donetick.com/core/internal/homequest/family"
 	"donetick.com/core/internal/homequest/shopping"
+	"donetick.com/core/internal/homequest/stats"
 	"donetick.com/core/internal/homequest/task"
+	"donetick.com/core/internal/homequest/wishlist"
 	"gorm.io/gorm"
 )
 
 type Change struct {
-	AssignedTo  *int             `json:"assigned_to,omitempty" jsonschema:"description=Member ID for task_create; omit for shared task"`
-	Reviewer    *int             `json:"reviewer,omitempty" jsonschema:"description=Member ID for task_create with approval; omit for any other adult"`
-	Snapshot    string           `json:"snapshot,omitempty" jsonschema:"description=Exact snapshot from read_resources for an existing shopping item, reward or redemption"`
-	Operation   string           `json:"operation" jsonschema:"description=One operation from the provided catalog"`
-	ID          int              `json:"id,omitempty"`
-	Version     int              `json:"version,omitempty"`
-	Name        string           `json:"name,omitempty"`
-	Points      int              `json:"points,omitempty"`
-	Due         string           `json:"due,omitempty" jsonschema:"description=Local family time YYYY-MM-DD HH:MM or без срока"`
-	Description string           `json:"description,omitempty"`
-	Target      int              `json:"target,omitempty" jsonschema:"description=Member ID for assignment or room ID for task_room; zero means shared/unset"`
-	Schedule    *task.Schedule   `json:"schedule,omitempty"`
-	Approval    bool             `json:"approval,omitempty"`
-	Photo       bool             `json:"photo,omitempty"`
-	Members     []int            `json:"members,omitempty"`
-	Items       []shopping.Input `json:"items,omitempty"`
+	Timezone   string            `json:"timezone,omitempty"`
+	QuietStart *int              `json:"quiet_start,omitempty"`
+	QuietEnd   *int              `json:"quiet_end,omitempty"`
+	Days       int               `json:"days,omitempty"`
+	Minutes    int               `json:"minutes,omitempty"`
+	Choices    []task.PresetTask `json:"choices,omitempty" jsonschema:"description=For preset_apply only. Omit for defaults; read_overview presets supplies editable task keys and schedules."`
+	Offsets    *[]int            `json:"offsets,omitempty"`
+
+	RoomFromStep int              `json:"room_from_step,omitempty" jsonschema:"description=For task_create, one-based index of earlier room_create in this plan; mutually exclusive with target"`
+	Link         string           `json:"link,omitempty"`
+	Price        string           `json:"price,omitempty" jsonschema:"description=Informational gift price only"`
+	AssignedTo   *int             `json:"assigned_to,omitempty" jsonschema:"description=Member ID for task_create; omit for shared task"`
+	Reviewer     *int             `json:"reviewer,omitempty" jsonschema:"description=Member ID for task_create with approval; omit for any other adult"`
+	Snapshot     string           `json:"snapshot,omitempty" jsonschema:"description=Optional; the server attaches the observed snapshot automatically"`
+	Operation    string           `json:"operation" jsonschema:"description=One operation from the provided catalog"`
+	ID           int              `json:"id,omitempty"`
+	Version      int              `json:"version,omitempty" jsonschema:"description=Task instance version from read_tasks only; omit for all other kinds"`
+	Name         string           `json:"name,omitempty"`
+	Points       int              `json:"points,omitempty"`
+	Due          string           `json:"due,omitempty" jsonschema:"description=Local family time YYYY-MM-DD HH:MM or без срока"`
+	Description  string           `json:"description,omitempty"`
+	Target       int              `json:"target,omitempty" jsonschema:"description=Member ID for assignment or room ID for task_room; zero means shared/unset"`
+	Schedule     *task.Schedule   `json:"schedule,omitempty"`
+	Approval     bool             `json:"approval,omitempty"`
+	Photo        bool             `json:"photo,omitempty"`
+	Members      []int            `json:"members,omitempty"`
+	Items        []shopping.Input `json:"items,omitempty"`
 }
 type Capability struct {
 	Name        string `json:"name"`
@@ -55,6 +69,44 @@ var Catalog = []Capability{
 	{"task_cancel", "Отменить задание, сохранив историю", "task"},
 	{"task_complete", "Отправить выполнение; фото/проверка остаются обязательными", "task"},
 	{"room_create", "Добавить комнату: name", "new"},
+	{"premium_on", "Включить семейный Premium для теста без оплаты", "setting"},
+	{"premium_off", "Выключить тестовый Premium", "setting"},
+	{"weekly_goal", "Цель со следующей недели: points", "setting"},
+	{"digest_on", "Включить семейный недельный итог", "setting"},
+	{"digest_off", "Выключить семейный недельный итог", "setting"},
+	{"family_timezone", "Изменить часовой пояс дома: name в формате IANA", "setting"},
+	{"family_create", "Создать первый дом: name и явно выбранный пользователем IANA timezone", "setting"},
+	{"family_switch", "Выбрать другой свой дом с точным названием name", "setting"},
+	{"family_leave", "Выйти из текущего дома, сохраняя историю", "setting"},
+	{"invite_revoke", "Отозвать приглашения дома", "setting"},
+	{"invite_create", "Создать приглашение на семь дней и прислать ссылку в личку", "setting"},
+	{"reminder_mute", "Выключить личные напоминания", "setting"},
+	{"reminder_unmute", "Включить личные напоминания", "setting"},
+	{"quiet_hours", "Изменить тихие часы: quiet_start, quiet_end от 0 до 23", "setting"},
+	{"vacation", "Приостановить личные уведомления: days до 365, 0 для завершения отпуска", "setting"},
+	{"reminder_offsets", "Изменить семейные напоминания: offsets (минуты относительно срока)", "setting"},
+	{"task_snooze", "Отложить своё последнее полученное напоминание по задаче: minutes", "task"},
+	{"task_handoff", "Предложить другому участнику взять задание: target", "task"},
+	{"handoff_accept", "Принять предложение взять задание", "handoff"},
+	{"handoff_decline", "Отклонить предложение взять задание", "handoff"},
+	{"handoff_cancel", "Отозвать предложение передать задание", "handoff"},
+	{"wish_cleanup", "Освободить брони ушедших участников", "setting"},
+	{"preset_apply", "Добавить готовый набор: name=kitchen, bathroom или daily", "setting"},
+
+	{"member_remove", "Исключить участника: target", "setting"},
+	{"owner_transfer", "Передать права владельца участнику: target", "setting"},
+	{"report_approve", "Принять чужой отчёт", "report"},
+	{"report_reject", "Отклонить чужой отчёт", "report"},
+	{"report_undo", "Отменить своё прямое выполнение в течение пяти минут", "report"},
+	{"report_photo", "Получить прикреплённое фотоотчёта отдельным сообщением", "report"},
+	{"room_rename", "Переименовать комнату: name", "room"},
+	{"room_delete", "Удалить группировку по комнате; задания сохранятся", "room"},
+	{"wish_create", "Добавить своё желание: name, description, link, price (справочная цена)", "new"},
+	{"wish_edit", "Изменить своё желание, передать все поля name, description, link, price", "wish"},
+	{"wish_archive", "Убрать своё желание", "wish"},
+	{"wish_claim", "Тайно забронировать подарок другого участника", "wish"},
+	{"wish_purchase", "Отметить покупку забронированного вами подарка", "wish"},
+	{"wish_release", "Снять свою тайную бронь", "wish"},
 	{"shopping_add", "Добавить покупки: items", "new"},
 	{"shopping_edit", "Изменить покупку: items с одной полной позицией name/quantity/note", "shopping"},
 	{"shopping_claim", "Взять покупку на себя", "shopping"},
@@ -82,9 +134,10 @@ func capability(name string) (Capability, bool) {
 }
 
 type Plan struct {
-	ID                         string `gorm:"primaryKey"`
-	Viewer                     int64  `gorm:"uniqueIndex:hq_agent_request"`
-	Request                    string `gorm:"uniqueIndex:hq_agent_request"`
+	ReplyTarget                ReplyTarget `gorm:"embedded;embeddedPrefix:reply_target_"`
+	ID                         string      `gorm:"primaryKey"`
+	Viewer                     int64       `gorm:"uniqueIndex:hq_agent_request"`
+	Request                    string      `gorm:"uniqueIndex:hq_agent_request"`
 	CircleID, Revision, RoomID int
 	Timezone                   string
 	State                      string
@@ -106,6 +159,9 @@ var errPreview = errors.New("rollback preview")
 
 func (s *Service) Prepare(c Context, request string, changes []Change, now time.Time) (Plan, error) {
 	var p Plan
+	if e := CheckReplyChanges(c, changes); e != nil {
+		return p, e
+	}
 	if request == "" || len(request) > 100 || len(changes) < 1 || len(changes) > 10 {
 		return p, ErrPlan
 	}
@@ -114,7 +170,7 @@ func (s *Service) Prepare(c Context, request string, changes []Change, now time.
 		return p, ErrPlan
 	}
 	e = s.DB.Transaction(func(tx *gorm.DB) error {
-		child := &Service{tx}
+		child := s.withDB(tx)
 		if e := child.Check(c, now); e != nil {
 			return e
 		}
@@ -133,14 +189,17 @@ func (s *Service) Prepare(c Context, request string, changes []Change, now time.
 			return e
 		}
 		p = Plan{ID: id, Viewer: c.Viewer, Request: request, CircleID: c.CircleID, RoomID: c.RoomID, Revision: c.Revision, Timezone: c.Timezone, State: "pending", Changes: string(raw), Expires: now.Add(15 * time.Minute), CreatedAt: now}
-		if e = child.validateTargets(p, changes); e != nil {
+		if c.ReplyTarget != nil {
+			p.ReplyTarget = *c.ReplyTarget
+		}
+		if e = child.validateTargets(p, changes, now); e != nil {
 			return e
 		}
 		// Execute the SAME domain services in a rolled-back savepoint. These services
 		// only write this DB, never call Telegram/LLM. This validates permissions and
 		// the entire chain without copying rules or committing ledger/jobs/attempts.
 		e = tx.Transaction(func(dry *gorm.DB) error {
-			_, e := (&Service{dry}).execute(p, changes, now)
+			_, e := s.withDB(dry).execute(p, changes, now)
 			if e != nil {
 				return e
 			}
@@ -152,7 +211,7 @@ func (s *Service) Prepare(c Context, request string, changes []Change, now time.
 			}
 			return e
 		}
-		summary, e := child.describe(p, changes)
+		summary, e := child.describe(p, changes, now)
 		if e != nil {
 			return e
 		}
@@ -165,10 +224,22 @@ func (s *Service) Prepare(c Context, request string, changes []Change, now time.
 	})
 	return p, e
 }
-func (s *Service) validateTargets(p Plan, changes []Change) error {
+func (s *Service) validateTargets(p Plan, changes []Change, now time.Time) error {
 	seen := map[int]int{}
 	resources := map[string]bool{}
-	for _, v := range changes {
+	for index, v := range changes {
+		if e := p.ReplyTarget.checkChange(v); e != nil {
+			return e
+		}
+		if v.RoomFromStep != 0 && (v.RoomFromStep < 1 || v.RoomFromStep > index || v.Target != 0 || changes[v.RoomFromStep-1].Operation != "room_create") {
+			return ErrPlan
+		}
+		if p.CircleID == 0 && v.Operation != "family_create" && v.Operation != "family_switch" {
+			return ErrPlan
+		}
+		if (v.Operation == "family_switch" || v.Operation == "family_leave" || v.Operation == "family_create") && len(changes) != 1 {
+			return ErrPlan
+		}
 		if e := validateFields(v); e != nil {
 			return e
 		}
@@ -190,7 +261,7 @@ func (s *Service) validateTargets(p Plan, changes []Change) error {
 				return ErrPlan
 			}
 			resources[key] = true
-			r, e := s.resource(p, v)
+			r, e := s.resource(p, v, now)
 			if e != nil {
 				return e
 			}
@@ -220,7 +291,7 @@ func (s *Service) Apply(uid int64, id string, now time.Time) (out []Effect, err 
 		if tx.First(&p, "id=? AND viewer=?", id, uid).Error != nil {
 			return ErrPlan
 		}
-		child := &Service{tx}
+		child := s.withDB(tx)
 		c, e := child.Context(uid, now)
 		if e != nil {
 			return e
@@ -241,7 +312,7 @@ func (s *Service) Apply(uid int64, id string, now time.Time) (out []Effect, err 
 		if json.Unmarshal([]byte(p.Changes), &changes) != nil {
 			return ErrPlan
 		}
-		if e = child.validateTargets(p, changes); e != nil {
+		if e = child.validateTargets(p, changes, now); e != nil {
 			return e
 		}
 		out, e = child.execute(p, changes, now)
@@ -281,6 +352,9 @@ func (s *Service) execute(p Plan, changes []Change, now time.Time) ([]Effect, er
 				r.ID = item.ID
 				r.Status = "created"
 				room := v.Target
+				if v.RoomFromStep > 0 {
+					room = out[v.RoomFromStep-1].ID
+				}
 				if room == 0 {
 					room = p.RoomID
 				}
@@ -346,6 +420,52 @@ func (s *Service) execute(p Plan, changes []Change, now time.Time) ([]Effect, er
 			a, e = ts.Submit(p.Viewer, p.CircleID, v.ID, "", now)
 			r.AttemptID = a.ID
 			r.Status = a.Status
+		case "invite_create", "task_snooze", "task_handoff", "reminder_mute", "reminder_unmute", "quiet_hours", "vacation", "reminder_offsets":
+			if s.LocalAction == nil {
+				return nil, ErrPlan
+			}
+			e = s.LocalAction(s.DB, p, v, now)
+		case "preset_apply":
+			_, e = ts.ApplyPreset(p.Viewer, p.CircleID, v.Name, v.presetChoices(), now)
+		case "wish_cleanup":
+			e = (&wishlist.Service{DB: s.DB}).ReleaseDeparted(p.Viewer, p.CircleID)
+		case "premium_on", "premium_off":
+			e = (&billing.Service{DB: s.DB, Mode: s.BillingMode}).Manual(p.Viewer, p.CircleID, v.Operation == "premium_on", now)
+		case "weekly_goal":
+			e = (&stats.Service{DB: s.DB}).SetWeeklyGoal(p.Viewer, p.CircleID, v.Points, now)
+		case "digest_on", "digest_off":
+			e = (&stats.Service{DB: s.DB}).SetDigest(p.Viewer, p.CircleID, v.Operation == "digest_on")
+		case "family_create":
+			_, e = (&family.Service{DB: s.DB}).Create(p.Viewer, v.Name, v.Timezone)
+		case "family_leave":
+			e = (&family.Service{DB: s.DB}).Leave(p.Viewer)
+		case "family_switch":
+			f := &family.Service{DB: s.DB}
+			homes, err := f.Homes(p.Viewer)
+			if err != nil {
+				return nil, err
+			}
+			target := 0
+			for _, h := range homes {
+				if strings.EqualFold(strings.TrimSpace(v.Name), h.Name) {
+					if target != 0 {
+						return nil, ErrPlan
+					}
+					target = h.ID
+				}
+			}
+			if target == 0 {
+				return nil, ErrPlan
+			}
+			e = f.Switch(p.Viewer, target)
+		case "family_timezone":
+			e = ts.ChangeTimezone(p.Viewer, v.Name)
+		case "member_remove":
+			e = (&family.Service{DB: s.DB}).Remove(p.Viewer, v.Target)
+		case "owner_transfer":
+			e = (&family.Service{DB: s.DB}).Transfer(p.Viewer, v.Target)
+		case "invite_revoke":
+			e = (&family.Service{DB: s.DB}).Revoke(p.Viewer)
 		case "room_create":
 			var room task.Room
 			room, e = ts.CreateRoom(p.Viewer, p.CircleID, v.Name)
@@ -364,7 +484,15 @@ func (s *Service) execute(p Plan, changes []Change, now time.Time) ([]Effect, er
 	}
 	return out, nil
 }
-func (s *Service) describe(p Plan, changes []Change) (string, error) {
+func (s *Service) describe(p Plan, changes []Change, now time.Time) (string, error) {
+	if len(changes) == 1 {
+		switch changes[0].Operation {
+		case "family_create":
+			return "Создать дом «" + changes[0].Name + "» · " + changes[0].Timezone, nil
+		case "family_switch":
+			return "Перейти в дом «" + changes[0].Name + "»", nil
+		}
+	}
 	h, e := (&family.Service{DB: s.DB}).View(p.Viewer, p.CircleID)
 	if e != nil {
 		return "", e
@@ -404,8 +532,35 @@ func (s *Service) describe(p Plan, changes []Change) (string, error) {
 	lines := []string{}
 	for _, v := range changes {
 		cap, _ := capability(v.Operation)
-		if resourceTarget(cap.Target) || v.Operation == "reward_create" {
-			text, e := s.describeResource(p, v)
+		if cap.Target == "setting" {
+			label := strings.Split(cap.Description, ":")[0]
+			switch v.Operation {
+			case "quiet_hours":
+				label += fmt.Sprintf(" · %02d–%02d", *v.QuietStart, *v.QuietEnd)
+			case "vacation":
+				label += fmt.Sprintf(" · дней: %d", v.Days)
+			case "reminder_offsets":
+				label += fmt.Sprintf(" · минуты: %v", *v.Offsets)
+			case "preset_apply":
+				label += " · " + task.PresetNames[v.Name]
+				for _, choice := range v.presetChoices() {
+					if !choice.Enabled {
+						continue
+					}
+					label += fmt.Sprintf("\n%s · %d баллов · каждые %d дн. в %02d:%02d", choice.Name, choice.Points, choice.Every, choice.Hour, choice.Minute)
+				}
+			case "weekly_goal":
+				label += fmt.Sprintf(" · %d баллов", v.Points)
+			case "family_timezone":
+				label += " · " + v.Name
+			case "member_remove", "owner_transfer":
+				label += fmt.Sprintf(" · %s (участник №%d)", member(v.Target), v.Target)
+			}
+			lines = append(lines, label)
+			continue
+		}
+		if resourceTarget(cap.Target) || v.Operation == "reward_create" || v.Operation == "wish_create" {
+			text, e := s.describeResource(p, v, now)
 			if e != nil {
 				return "", e
 			}
@@ -451,7 +606,11 @@ func (s *Service) describe(p Plan, changes []Change) (string, error) {
 			if target == 0 {
 				target = p.RoomID
 			}
-			text = fmt.Sprintf("Создать «%s» · %d баллов · %s", name, v.Points, room(target))
+			roomName := room(target)
+			if v.RoomFromStep > 0 {
+				roomName = changes[v.RoomFromStep-1].Name
+			}
+			text = fmt.Sprintf("Создать «%s» · %d баллов · %s", name, v.Points, roomName)
 			if v.Schedule != nil {
 				text += " · " + scheduleLabel(*v.Schedule)
 			}
@@ -476,6 +635,10 @@ func (s *Service) describe(p Plan, changes []Change) (string, error) {
 			if v.Schedule != nil {
 				text += " · " + scheduleLabel(*v.Schedule) + " (" + h.Timezone + ")"
 			}
+		case "task_snooze":
+			text += fmt.Sprintf(" · напомнить через %d мин.", v.Minutes)
+		case "task_handoff":
+			text += " · предложить взять дело: " + member(v.Target)
 		case "task_assign":
 			text += " → " + member(v.Target)
 		case "task_reviewer":
@@ -519,6 +682,12 @@ func (s *Service) describe(p Plan, changes []Change) (string, error) {
 	}
 	return strings.Join(lines, "\n"), nil
 }
+func (v Change) presetChoices() []task.PresetTask {
+	if v.Choices != nil {
+		return v.Choices
+	}
+	return task.PresetTasks(v.Name)
+}
 func scheduleLabel(s task.Schedule) string {
 	at := fmt.Sprintf(" в %02d:%02d", s.Hour, s.Minute)
 	switch s.Mode {
@@ -543,6 +712,11 @@ func scheduleLabel(s task.Schedule) string {
 
 // Reject fields this operation does not implement: an omitted photo requirement
 // must never turn into a silently accepted ordinary task.
+type unsupportedField struct{ name string }
+
+func (e *unsupportedField) Error() string { return "unsupported field: " + e.name }
+func (*unsupportedField) Unwrap() error   { return ErrPlan }
+
 func validateFields(v Change) error {
 	allowed := map[string]bool{"operation": true, "id": true, "version": true, "snapshot": true}
 	var fields []string
@@ -554,7 +728,48 @@ func validateFields(v Change) error {
 		if v.Reviewer != nil && (!v.Approval || *v.Reviewer <= 0) {
 			return ErrPlan
 		}
-		fields = []string{"name", "points", "target", "schedule", "due", "description", "assigned_to", "reviewer", "approval", "photo"}
+		fields = []string{"name", "points", "target", "room_from_step", "schedule", "due", "description", "assigned_to", "reviewer", "approval", "photo"}
+	case "premium_on", "premium_off", "invite_revoke", "digest_on", "digest_off", "report_approve", "report_reject", "report_photo", "report_undo":
+	case "member_remove", "owner_transfer":
+		fields = []string{"target"}
+	case "weekly_goal":
+		fields = []string{"points"}
+	case "quiet_hours":
+		if v.QuietStart == nil || v.QuietEnd == nil {
+			return ErrPlan
+		}
+		fields = []string{"quiet_start", "quiet_end"}
+	case "vacation":
+		if v.Days < 0 || v.Days > 365 {
+			return ErrPlan
+		}
+		fields = []string{"days"}
+	case "task_snooze":
+		if v.Minutes < 1 || v.Minutes > 1440 {
+			return ErrPlan
+		}
+		fields = []string{"minutes"}
+	case "reminder_offsets":
+		if v.Offsets == nil {
+			return ErrPlan
+		}
+		fields = []string{"offsets"}
+	case "task_handoff":
+		fields = []string{"target"}
+	case "invite_create", "reminder_mute", "reminder_unmute", "handoff_accept", "handoff_decline", "handoff_cancel":
+	case "preset_apply":
+		if v.Choices != nil && len(v.Choices) == 0 {
+			return ErrPlan
+		}
+		fields = []string{"name", "choices"}
+	case "wish_cleanup":
+	case "family_timezone":
+		fields = []string{"name"}
+	case "family_create":
+		fields = []string{"name", "timezone"}
+	case "family_switch":
+		fields = []string{"name"}
+	case "family_leave":
 	case "task_edit":
 		fields = []string{"name", "points"}
 	case "task_due":
@@ -570,7 +785,10 @@ func validateFields(v Change) error {
 	case "task_rotation":
 		fields = []string{"members"}
 	case "task_pause", "task_resume", "task_cancel", "task_complete":
-	case "room_create":
+	case "wish_create", "wish_edit":
+		fields = []string{"name", "description", "link", "price"}
+	case "room_delete", "wish_archive", "wish_claim", "wish_release", "wish_purchase":
+	case "room_rename", "room_create":
 		fields = []string{"name"}
 	case "shopping_add", "shopping_edit":
 		fields = []string{"items"}
@@ -590,7 +808,7 @@ func validateFields(v Change) error {
 	}
 	for key := range values {
 		if !allowed[key] {
-			return ErrPlan
+			return &unsupportedField{key}
 		}
 	}
 	return nil

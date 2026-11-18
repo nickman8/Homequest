@@ -86,3 +86,59 @@ func TestTimezoneChangePreservesLocalScheduleAndInvalidatesCards(t *testing.T) {
 		t.Fatal(next)
 	}
 }
+
+func TestDailyWallClockSurvivesCreatingRuleAroundGap(t *testing.T) {
+	for _, tc := range []struct {
+		zone                     string
+		month                    time.Month
+		transition, hour, minute int
+	}{
+		{"Europe/Berlin", time.March, 29, 2, 30},
+		{"America/New_York", time.March, 8, 2, 15},
+		{"Australia/Lord_Howe", time.October, 4, 2, 10},
+	} {
+		t.Run(tc.zone, func(t *testing.T) {
+			db, e := gorm.Open(sqlite.Open(t.TempDir()+"/home.db"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+			if e != nil {
+				t.Fatal(e)
+			}
+			f, e := family.New(db)
+			if e != nil {
+				t.Fatal(e)
+			}
+			s, e := New(db)
+			if e != nil {
+				t.Fatal(e)
+			}
+			if e = f.Start(900001, "A"); e != nil {
+				t.Fatal(e)
+			}
+			h, e := f.Create(900001, "Дом", tc.zone)
+			if e != nil {
+				t.Fatal(e)
+			}
+			loc, e := time.LoadLocation(tc.zone)
+			if e != nil {
+				t.Fatal(e)
+			}
+			for _, day := range []int{tc.transition, tc.transition + 1} {
+				now := time.Date(2026, tc.month, day, 12, 0, 0, 0, loc)
+				item, e := s.Create(900001, h.ID, "Полить цветы", 5, nil)
+				if e != nil {
+					t.Fatal(e)
+				}
+				if e = s.SetSchedule(900001, h.ID, item.ID, Schedule{Mode: "daily", Hour: tc.hour, Minute: tc.minute}, now); e != nil {
+					t.Fatal(e)
+				}
+				var got Instance
+				if e = db.First(&got, item.ID).Error; e != nil {
+					t.Fatal(e)
+				}
+				want := time.Date(2026, tc.month, day+1, tc.hour, tc.minute, 0, 0, loc)
+				if got.DueAt == nil || !got.DueAt.Equal(want) {
+					t.Errorf("creation %v: due %v; want %v", now, got.DueAt, want)
+				}
+			}
+		})
+	}
+}

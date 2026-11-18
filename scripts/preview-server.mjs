@@ -26,7 +26,7 @@ const server=http.createServer(async(req,res)=>{
   // A bounded subprocess; no production environment variables are inherited.
   const invoke=()=>new Promise((resolve,reject)=>{
    const child=execFile('./bin/bot-probe',[path.join(dir,'demo.db')],{maxBuffer:1<<20,timeout:15000,env:{PATH:process.env.PATH}},(err,stdout)=>err?reject(Error('handler')):resolve(stdout));
-   child.stdin.end(JSON.stringify({viewer:input.viewer,text:input.text||'',action:input.action||'',photo:input.photo||'',now:clock,tick:input.tick===true,ai_command:aiCommand,agent_fixture:agentFixture,speech,voice:input.voice===true,voice_duration:input.voice_duration??3,voice_size:input.voice_size??0,speech_failure:input.speech_failure===true,process_ai:input.process_ai===true,update_id:input.update_id||0,billing_mode:input.billing_mode||''}));
+   child.stdin.end(JSON.stringify({viewer:input.viewer,reply_actions:input.reply_actions||[],reply_sender:input.reply_sender||'',text:input.text||'',action:input.action||'',photo:input.photo||'',now:clock,tick:input.tick===true,ai_command:aiCommand,agent_fixture:agentFixture,speech,voice:input.voice===true,voice_duration:input.voice_duration??3,voice_size:input.voice_size??0,speech_failure:input.speech_failure===true,process_ai:input.process_ai===true,update_id:input.update_id||0,billing_mode:input.billing_mode||''}));
   });
   const pending=chain.then(invoke);chain=pending.catch(()=>{});
   const result=await pending;

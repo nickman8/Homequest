@@ -194,7 +194,7 @@ func (b *Bot) Run(ctx context.Context, api API, status func(string)) error {
 	}()
 	defer func() { cancel(); <-workerDone }()
 
-	if e := b.DB.Model(&AIJob{}).Where("state = ?", "processing").Updates(map[string]any{"state": "failed", "text": "", "voice_id": "", "command": "", "candidates": ""}).Error; e != nil {
+	if e := b.recoverInterruptedAI(); e != nil {
 		return e
 	}
 	aiDone := make(chan struct{})
@@ -274,4 +274,16 @@ func (b *Bot) Run(ctx context.Context, api API, status func(string)) error {
 		}
 	}
 	return ctx.Err()
+}
+
+// Reasoning has no external write tools. A plan and its job status commit
+// together, so a still-processing agent job can restart once before its TTL.
+func (b *Bot) recoverInterruptedAI() error {
+	return b.DB.Transaction(func(tx *gorm.DB) error {
+		resumed := tx.Model(&AIJob{}).Where("state=? AND agent=? AND restarted=? AND consent_scope=? AND created_at>=?", "processing", true, false, agentConsentScope, b.Now().Add(-15*time.Minute)).Updates(map[string]any{"state": "queued", "restarted": true})
+		if resumed.Error != nil {
+			return resumed.Error
+		}
+		return tx.Model(&AIJob{}).Where("state=?", "processing").Updates(map[string]any{"state": "failed", "text": "", "voice_id": "", "command": "", "candidates": ""}).Error
+	})
 }

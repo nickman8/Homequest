@@ -26,7 +26,9 @@ try{
  for(const [id,fault] of [['REC03','failure'],['REC04','timeout'],['REC05','malformed']]){
   await scenario(id,'negative',`${fault}: no mutation and no stuck confirmation`,async()=>{
    const snapshot=JSON.stringify(f.last.tasks_open);
-   await f.request('task_complete','Я сделал ручное дело',{search:'Ручное',[fault]:true});f.denied();
+   await f.request('task_complete','Я сделал ручное дело',{search:'Ручное',[fault]:true});
+   if (fault==='timeout') assert.match(f.last.payload.text,/не дождался ответа сервиса/);
+   else f.denied();
    assert.equal(JSON.stringify(f.last.tasks_open),snapshot);assert.equal(f.last.balance,0);assert.equal(f.last.ai_jobs.at(-1).State,'failed');
    await f.send('Подтверждаю');await f.inject({tick:true,process_ai:true});assert.match(f.last.payload.text,/Нет актуального плана/);assert.equal(f.last.balance,0);
   });

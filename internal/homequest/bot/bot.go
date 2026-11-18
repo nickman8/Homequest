@@ -38,11 +38,24 @@ type Voice struct {
 	Duration int    `json:"duration"`
 	Size     int    `json:"file_size"`
 }
+type CardReply struct {
+	MessageID int64 `json:"message_id"`
+	From      struct {
+		IsBot    bool   `json:"is_bot"`
+		Username string `json:"username"`
+	} `json:"from"`
+	Markup struct {
+		Rows [][]struct {
+			Data string `json:"callback_data"`
+		} `json:"inline_keyboard"`
+	} `json:"reply_markup"`
+}
 type Message struct {
-	Voice  *Voice `json:"voice,omitempty"`
-	From   Person `json:"from"`
-	Chat   Chat   `json:"chat"`
-	Text   string `json:"text"`
+	Reply  *CardReply `json:"reply_to_message,omitempty"`
+	Voice  *Voice     `json:"voice,omitempty"`
+	From   Person     `json:"from"`
+	Chat   Chat       `json:"chat"`
+	Text   string     `json:"text"`
 	Photos []struct {
 		FileID string `json:"file_id"`
 	} `json:"photo"`
@@ -106,15 +119,16 @@ type Delivery struct {
 func (Delivery) TableName() string { return "hq_deliveries" }
 
 type Action struct {
-	WishID     int
-	InstanceID int
-	Version    int
-	Token      string `gorm:"primaryKey"`
-	Viewer     int64  `gorm:"index"`
-	CircleID   int
-	Kind       string
-	Expires    time.Time
-	Used       bool
+	ReplyTarget agent.ReplyTarget `gorm:"embedded;embeddedPrefix:reply_target_"`
+	WishID      int
+	InstanceID  int
+	Version     int
+	Token       string `gorm:"primaryKey"`
+	Viewer      int64  `gorm:"index"`
+	CircleID    int
+	Kind        string
+	Expires     time.Time
+	Used        bool
 }
 
 func (Action) TableName() string { return "hq_actions" }
@@ -129,6 +143,7 @@ type Card struct {
 	Buttons []Button `json:"buttons"`
 }
 type Bot struct {
+	reply           *CardReply
 	autoRefresh     bool
 	screen          string
 	UIMode          string
@@ -226,6 +241,7 @@ func (b *Bot) Handle(update Update) error {
 			if e := child.Family.Start(m.From.ID, m.From.Name); e != nil {
 				return e
 			}
+			child.reply = m.Reply
 			if m.Voice != nil {
 				if m.Voice.Duration > 60 || m.Voice.Size > 4<<20 {
 					return child.say(m.From.ID, "Пришлите голосовое до 60 секунд и 4 МБ.")
@@ -320,6 +336,7 @@ func (b *Bot) button(uid int64, circle int, kind, label string) (Button, error) 
 			a.Version = instance.Version
 		}
 	}
+	b.bindReplyButton(&a)
 	e := b.DB.Create(&a).Error
 	return Button{label, a.Token}, e
 }

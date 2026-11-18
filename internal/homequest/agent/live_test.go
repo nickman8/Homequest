@@ -2,10 +2,14 @@ package agent
 
 import (
 	"context"
+	"donetick.com/core/internal/homequest/assistant"
 	"donetick.com/core/internal/homequest/reward"
 	"donetick.com/core/internal/homequest/task"
+	"donetick.com/core/internal/homequest/wishlist"
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -47,7 +51,7 @@ func TestLiveEinoRoomPlan(t *testing.T) {
 	}
 	p, e := s.Prepare(scope, "live-fixture", proposal.Changes, now)
 	if e != nil {
-		t.Fatal("live proposal failed domain validation")
+		t.Fatal("live proposal failed domain validation", e, "task version supplied", proposal.Changes[0].Version != 0)
 	}
 	if _, e = s.Apply(alice, p.ID, now); e != nil {
 		t.Fatal(e)
@@ -123,7 +127,7 @@ func TestLiveEinoRewardPlan(t *testing.T) {
 	}
 	p, e := s.Prepare(scope, "live-reward", proposal.Changes, now)
 	if e != nil {
-		t.Fatal("live proposal failed domain validation")
+		t.Fatal("live proposal failed domain validation", e, "task version supplied", proposal.Changes[0].Version != 0)
 	}
 	before, _ := ts.Balance(alice, c)
 	if before != 50 {
@@ -144,4 +148,82 @@ func TestLiveEinoRewardPlan(t *testing.T) {
 		t.Fatal("duplicate spend")
 	}
 	t.Log("PASS real Eino/VyceAI -> scoped reward read -> snapshot preview -> synthetic SQLite spend once; no production writes or STT")
+}
+
+func TestLiveEinoWishPlan(t *testing.T) {
+	engine := liveEngine(t)
+	s, circle, now := setup(t)
+	wishes, err := wishlist.New(s.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := s.Context(alice, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := engine.Run(context.Background(), scope, "Добавь в мой список желаний подарок «Термос». Без ссылки, цены и заметки.", databaseAccess{s, scope, now})
+	if err != nil {
+		t.Fatal("live wish plan", err)
+	}
+	if len(p.Changes) != 1 || p.Changes[0].Operation != "wish_create" || p.Changes[0].Name != "Термос" {
+		t.Fatal("unexpected wish proposal")
+	}
+	preview, err := s.Prepare(scope, "live-wish", p.Changes, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := wishes.List(alice, circle)
+	if err != nil || len(rows) != 0 {
+		t.Fatal("preview wrote a gift")
+	}
+	if _, err = s.Apply(alice, preview.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = wishes.List(alice, circle)
+	if err != nil || len(rows) != 1 || rows[0].Name != "Термос" || rows[0].Claim != nil {
+		t.Fatal("wish projection after confirmation")
+	}
+}
+
+// Opt-in sample must be approved for the live provider and contain only the
+// completion phrase. Audio stays local. The test family and balance are temporary.
+func TestLiveEinoRussianAudio(t *testing.T) {
+	path := os.Getenv("HQ_LIVE_RUSSIAN_AUDIO")
+	if path == "" {
+		t.Skip("provide approved audio of the completion phrase")
+	}
+	engine := liveEngine(t)
+	audio, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal("audio unavailable")
+	}
+	stt := assistant.FasterWhisper{Python: os.Getenv("STT_PYTHON"), Script: filepath.Join("..", "..", "..", "scripts", "transcribe.py"), TempDir: t.TempDir()}
+	transcript, err := stt.Transcribe(context.Background(), audio)
+	if err != nil || !strings.Contains(strings.ToLower(transcript), "мусор") || !strings.Contains(strings.ToLower(transcript), "кинул") {
+		t.Fatal("local STT did not recognize the requested completion")
+	}
+	s, circle, now := setup(t)
+	ts := &task.Service{DB: s.DB}
+	row, err := ts.Create(alice, circle, "Вынести мусор", 10, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := s.Context(alice, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := engine.Run(context.Background(), ctx, transcript, databaseAccess{s, ctx, now})
+	if err != nil || len(p.Changes) != 1 || p.Changes[0].Operation != "task_complete" || p.Changes[0].ID != row.ID || ValidateIntent(transcript, p.Changes) != nil {
+		t.Fatal("recognized audio did not produce the authorized command", err)
+	}
+	preview, err := s.Prepare(ctx, "live-audio", p.Changes, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Apply(alice, preview.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	if balance, err := ts.Balance(alice, circle); err != nil || balance != 10 {
+		t.Fatal("missing or incorrect award")
+	}
 }

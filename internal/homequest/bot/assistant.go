@@ -6,17 +6,19 @@ import (
 	"donetick.com/core/internal/homequest/assistant"
 	"donetick.com/core/internal/homequest/billing"
 	"donetick.com/core/internal/homequest/family"
+	"donetick.com/core/internal/homequest/reward"
 	"donetick.com/core/internal/homequest/task"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"gorm.io/gorm"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
-const agentConsentScope = "agent_v2"
+const agentConsentScope = "agent_v3"
 
 type AIConsent struct {
 	Scope    string
@@ -28,23 +30,26 @@ type AIConsent struct {
 func (AIConsent) TableName() string { return "hq_ai_consents" }
 
 type AIJob struct {
-	ConsentScope    string
-	Agent           bool
-	ContextRevision int
-	RoomID          int
-	Timezone        string
-	PlanID          string
-	ConfirmPlan     string
-	Provider        string
-	ID              uint `gorm:"primaryKey"`
-	Viewer          int64
-	CircleID        int
-	Text            string
-	VoiceID         string
-	State           string `gorm:"index"`
-	Command         string
-	Candidates      string
-	CreatedAt       time.Time
+	Restarted               bool              `gorm:"not null;default:false"`
+	ReplyTarget             agent.ReplyTarget `gorm:"embedded;embeddedPrefix:reply_target_"`
+	ReplyTask, ReplyVersion int
+	ConsentScope            string
+	Agent                   bool
+	ContextRevision         int
+	RoomID                  int
+	Timezone                string
+	PlanID                  string
+	ConfirmPlan             string
+	Provider                string
+	ID                      uint `gorm:"primaryKey"`
+	Viewer                  int64
+	CircleID                int
+	Text                    string
+	VoiceID                 string
+	State                   string `gorm:"index"`
+	Command                 string
+	Candidates              string
+	CreatedAt               time.Time
 }
 
 func (AIJob) TableName() string { return "hq_ai_jobs" }
@@ -53,7 +58,26 @@ type VoiceSource interface {
 	Voice(context.Context, string) ([]byte, error)
 }
 
+// Invitation credentials are processed locally. Telegram opens the existing
+// private /start join flow only after the recipient taps the explicit link.
+var inviteInText = regexp.MustCompile(`(?i)https://t\.me/([a-z0-9_]+)\?start=join_([a-f0-9]{48})\b`)
+
+func (b *Bot) invitationReply(uid int64, text string) (bool, error) {
+	if !strings.Contains(strings.ToLower(text), "join_") {
+		return false, nil
+	}
+	matches := inviteInText.FindAllStringSubmatch(text, 2)
+	if len(matches) != 1 || !strings.EqualFold(matches[0][1], b.Username) {
+		return true, b.say(uid, "Пришлите одну пригласительную ссылку этого бота или откройте её в Telegram.")
+	}
+	link := "https://t.me/" + b.Username + "?start=join_" + matches[0][2]
+	return true, b.queue("sendMessage", map[string]any{"chat_id": uid, "text": "Откройте приглашение, чтобы вступить в дом.", "reply_markup": map[string]any{"inline_keyboard": [][]map[string]string{{{"text": "Открыть приглашение", "url": link}}}}})
+}
+
 func (b *Bot) enqueueAI(uid int64, text, voice string) error {
+	if handled, e := b.invitationReply(uid, text); handled {
+		return e
+	}
 	if b.LLM == nil && b.Agent == nil && voice == "" {
 		return b.say(uid, "Помощник пока недоступен: доступ к выбранной модели не подтверждён. Задания можно выполнять кнопками.")
 	}
@@ -62,7 +86,12 @@ func (b *Bot) enqueueAI(uid int64, text, voice string) error {
 	}
 	h, e := b.Family.Current(uid)
 	if e != nil {
-		return b.home(uid, 0)
+		if b.Agent == nil {
+			return b.home(uid, 0)
+		}
+		if _, err := b.Family.Unattached(uid); err != nil {
+			return b.home(uid, 0)
+		}
 	}
 	var pending int64
 	if e = b.DB.Model(&AIJob{}).Where("state IN ?", []string{"consent", "queued", "processing", "confirm"}).Count(&pending).Error; e != nil {
@@ -104,6 +133,19 @@ func (b *Bot) enqueueAI(uid int64, text, voice string) error {
 		if e != nil {
 			return e
 		}
+		if b.reply != nil {
+			target, e := b.replyTarget(uid, h.ID)
+			if e != nil {
+				if errors.Is(e, errReplyAmbiguous) {
+					return b.say(uid, errReplyAmbiguous.Error())
+				}
+				return b.say(uid, "Откройте актуальную личную карточку нужного объекта и ответьте на неё ещё раз.")
+			}
+			job.ReplyTarget = target
+			if target.Kind == "task" {
+				job.ReplyTask, job.ReplyVersion = target.ID, target.Version
+			}
+		}
 		job.Agent = true
 		job.ContextRevision = c.Revision
 		job.RoomID = c.RoomID
@@ -119,7 +161,7 @@ func (b *Bot) enqueueAI(uid int64, text, voice string) error {
 	if state == "consent" {
 		notice := "Голос распознаётся локально. Если VyceAI доступен, текст и названия заданий передаются ему для понимания. Продолжить?"
 		if job.Agent {
-			notice = "Голос распознаётся локально. VyceAI получит текст, участников, комнаты, нужные задания, покупки, награды, баллы и до 4 прошлых обращений. Память сбрасывается после суток без обращений; её можно очистить. Продолжить?"
+			notice = "Голос распознаётся локально. VyceAI получит текст, участников, комнаты, нужные задания и статусы отчётов, покупки, пожелания семьи (без данных о бронях), награды, баллы и до 4 прошлых обращений. Память сбрасывается после суток без обращений; её можно очистить. Продолжить?"
 		}
 		return b.card(uid, 0, "Помощник по дому", notice, h.ID, fmt.Sprintf("ai_consent:%d", job.ID), "Понятно, продолжить", fmt.Sprintf("ai_cancel:%d", job.ID), "Отмена")
 	}
@@ -206,6 +248,7 @@ func (b *Bot) ProcessAI(ctx context.Context) error {
 	if result.RowsAffected != 1 {
 		return nil
 	}
+	failureMessage := "Помощник не смог безопасно обработать сообщение. Уточните просьбу или используйте кнопки."
 	fail := func() error {
 		return b.DB.Transaction(func(tx *gorm.DB) error {
 			var current AIJob
@@ -221,10 +264,14 @@ func (b *Bot) ProcessAI(ctx context.Context) error {
 			if e := tx.Model(&job).Updates(map[string]any{"state": "failed", "text": "", "voice_id": "", "command": "", "candidates": ""}).Error; e != nil {
 				return e
 			}
-			if _, e := child.Family.Authorize(job.Viewer, job.CircleID); e != nil {
+			if job.CircleID == 0 && job.Agent {
+				if _, e := child.Family.Unattached(job.Viewer); e != nil {
+					return nil
+				}
+			} else if _, e := child.Family.Authorize(job.Viewer, job.CircleID); e != nil {
 				return nil
 			}
-			return child.say(job.Viewer, "Помощник не смог безопасно обработать сообщение. Ничего не изменено; используйте кнопки или уточните фразу.")
+			return child.say(job.Viewer, failureMessage)
 		})
 	}
 	if job.Provider != b.AIProvider || (job.Agent && job.ConsentScope != agentConsentScope) {
@@ -232,7 +279,12 @@ func (b *Bot) ProcessAI(ctx context.Context) error {
 	}
 	home, e := b.Family.View(job.Viewer, job.CircleID)
 	if e != nil {
-		return fail()
+		if !job.Agent || job.CircleID != 0 {
+			return fail()
+		}
+		if _, e = b.Family.Unattached(job.Viewer); e != nil {
+			return fail()
+		}
 	}
 	if job.VoiceID != "" {
 		if b.STT == nil || b.VoiceSource == nil {
@@ -248,8 +300,31 @@ func (b *Bot) ProcessAI(ctx context.Context) error {
 		}
 	}
 
+	if job.VoiceID != "" && strings.Contains(strings.ToLower(job.Text), "join_") {
+		return b.DB.Transaction(func(tx *gorm.DB) error {
+			result := tx.Model(&job).Where("state=?", "processing").Updates(map[string]any{"state": "done", "voice_id": "", "text": ""})
+			if result.Error != nil || result.RowsAffected != 1 {
+				return result.Error
+			}
+			child := *b
+			child.DB = tx
+			child.Family = &family.Service{DB: tx}
+			_, e := child.invitationReply(job.Viewer, job.Text)
+			return e
+		})
+	}
 	if job.Agent {
 		if e = b.processAgent(ctx, &job); e != nil {
+			switch {
+			case errors.Is(e, agent.ErrChanged):
+				failureMessage = "Помощник не смог безопасно применить просьбу. Данные изменились. Откройте свежую карточку и повторите действие."
+			case errors.Is(e, reward.ErrInsufficient):
+				failureMessage = "Помощник не смог безопасно запросить награду. Для неё пока не хватает свободных баллов."
+			case errors.Is(e, family.ErrDenied):
+				failureMessage = "Помощник не смог безопасно выполнить просьбу. Проверьте активный дом и свои права."
+			case errors.Is(e, agent.ErrGatewayTimeout), errors.Is(e, context.DeadlineExceeded):
+				failureMessage = "Помощник не дождался ответа сервиса. Повторите просьбу или используйте кнопки."
+			}
 			return fail()
 		}
 		return nil
@@ -262,7 +337,11 @@ func (b *Bot) ProcessAI(ctx context.Context) error {
 			if e := tx.Model(&job).Updates(map[string]any{"state": "done", "text": "", "voice_id": ""}).Error; e != nil {
 				return e
 			}
-			if _, e := child.Family.Authorize(job.Viewer, job.CircleID); e != nil {
+			if job.CircleID == 0 && job.Agent {
+				if _, e := child.Family.Unattached(job.Viewer); e != nil {
+					return nil
+				}
+			} else if _, e := child.Family.Authorize(job.Viewer, job.CircleID); e != nil {
 				return nil
 			}
 			return child.say(job.Viewer, "Распознано локально: "+short(job.Text, 1000)+"\nVyceAI пока недоступен: задания не изменены. Проверьте текст и используйте кнопки.")

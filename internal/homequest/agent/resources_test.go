@@ -5,6 +5,8 @@ import (
 	"donetick.com/core/internal/homequest/reward"
 	"donetick.com/core/internal/homequest/shopping"
 	"donetick.com/core/internal/homequest/task"
+	"donetick.com/core/internal/homequest/wishlist"
+	"strings"
 	"testing"
 )
 
@@ -337,5 +339,89 @@ func TestAgentAccountSeparatesSpendingFromContribution(t *testing.T) {
 	scope.Viewer = stranger
 	if _, e = s.Account(scope, now); e == nil {
 		t.Fatal("foreign account read")
+	}
+}
+
+func TestAgentGiftSurpriseAndRoomLifecycle(t *testing.T) {
+	s, _, now := setup(t)
+	_, err := wishlist.New(s.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &family.Service{DB: s.DB}
+	invite, err := f.Invite(alice, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = f.Join(bob, invite, now); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := s.Context(alice, now)
+	b, _ := s.Context(bob, now)
+	apply := func(who Context, ch Change) {
+		t.Helper()
+		p, e := s.Prepare(who, ch.Operation, []Change{ch}, now)
+		if e != nil {
+			t.Fatal(ch.Operation, e)
+		}
+		if _, e = s.Apply(who.Viewer, p.ID, now); e != nil {
+			t.Fatal(e)
+		}
+	}
+	apply(a, Change{Operation: "wish_create", Name: "Атлас"})
+	read := func(who Context, kind string) Resource {
+		t.Helper()
+		rows, e := s.Resources(who, kind, now)
+		if e != nil || len(rows) != 1 {
+			t.Fatal(rows, e)
+		}
+		return rows[0]
+	}
+	owner := read(a, "wish")
+	for _, op := range []string{"wish_claim", "wish_purchase", "wish_release"} {
+		gift := read(b, "wish")
+		apply(b, Change{Operation: op, ID: gift.ID, Snapshot: gift.Snapshot})
+		if got := read(a, "wish"); got != owner {
+			t.Fatalf("recipient projection changed after %s", op)
+		}
+	}
+	if _, e := s.Prepare(a, "self", []Change{{Operation: "wish_claim", ID: owner.ID, Snapshot: owner.Snapshot}}, now); e == nil {
+		t.Fatal("self claim")
+	}
+	apply(a, Change{Operation: "wish_edit", ID: owner.ID, Snapshot: owner.Snapshot, Name: "Атлас мира"})
+	if _, e := s.Prepare(a, "stale", []Change{{Operation: "wish_archive", ID: owner.ID, Snapshot: owner.Snapshot}}, now); e == nil {
+		t.Fatal("stale item")
+	}
+	owner = read(a, "wish")
+	apply(a, Change{Operation: "wish_archive", ID: owner.ID, Snapshot: owner.Snapshot})
+	apply(a, Change{Operation: "room_create", Name: "Кухня"})
+	room := read(a, "room")
+	apply(a, Change{Operation: "room_rename", ID: room.ID, Snapshot: room.Snapshot, Name: "Столовая"})
+	room = read(a, "room")
+	apply(a, Change{Operation: "room_delete", ID: room.ID, Snapshot: room.Snapshot})
+}
+
+func TestAtomicTaskInNewRoom(t *testing.T) {
+	s, c, now := setup(t)
+	a, _ := s.Context(alice, now)
+	plan := []Change{{Operation: "room_create", Name: "Кухня"}, {Operation: "task_create", Name: "Помыть чашку", Points: 3, RoomFromStep: 1}}
+	p, e := s.Prepare(a, "kitchen", plan, now)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if !strings.Contains(p.Summary, "3 баллов · Кухня") {
+		t.Fatal(p.Summary)
+	}
+	result, e := s.Apply(alice, p.ID, now)
+	if e != nil {
+		t.Fatal(e)
+	}
+	rows, e := (&task.Service{DB: s.DB}).RoomTasks(alice, c, result[0].ID)
+	if e != nil || len(rows) != 1 || rows[0].ID != result[1].ID {
+		t.Fatal(rows, e)
+	}
+	plan[1].RoomFromStep = 2
+	if _, e = s.Prepare(a, "bad-ref", plan, now); e == nil {
+		t.Fatal("accepted forward reference")
 	}
 }

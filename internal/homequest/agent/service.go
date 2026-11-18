@@ -35,50 +35,80 @@ type Turn struct {
 	Result string `json:"result"`
 }
 type Context struct {
-	Viewer     int64           `json:"-"`
-	CircleID   int             `json:"-"`
-	Revision   int             `json:"-"`
-	RoomID     int             `json:"room_id"`
-	Room       string          `json:"room"`
-	Home       string          `json:"home"`
-	Timezone   string          `json:"timezone"`
-	LocalTime  string          `json:"local_time"`
-	Actor      int             `json:"actor_member_id"`
-	Owner      bool            `json:"owner"`
-	Members    []family.Member `json:"members"`
-	Rooms      []task.Room     `json:"rooms"`
-	References []int           `json:"previous_task_ids"`
-	History    []Turn          `json:"recent_conversation"`
+	ReplyTarget   *ReplyTarget    `json:"reply_to,omitempty"`
+	ReplyResource *Resource       `json:"reply_resource,omitempty"`
+	ReplyTask     int             `json:"reply_to_task_id,omitempty"`
+	Viewer        int64           `json:"-"`
+	CircleID      int             `json:"-"`
+	Revision      int             `json:"-"`
+	RoomID        int             `json:"room_id"`
+	Room          string          `json:"room"`
+	Home          string          `json:"home"`
+	Timezone      string          `json:"timezone"`
+	LocalTime     string          `json:"local_time"`
+	Actor         int             `json:"actor_member_id"`
+	Owner         bool            `json:"owner"`
+	Members       []family.Member `json:"members"`
+	Rooms         []task.Room     `json:"rooms"`
+	References    []int           `json:"previous_task_ids"`
+	History       []Turn          `json:"recent_conversation"`
 }
 type Task struct {
-	Description *string    `json:"description,omitempty"`
-	Reviewer    *int       `json:"reviewer,omitempty"`
-	ID          int        `json:"id"`
-	Version     int        `json:"version"`
-	Name        string     `json:"name"`
-	Points      int        `json:"points"`
-	DueAt       *time.Time `json:"due_utc"`
-	AssignedTo  *int       `json:"assigned_to"`
-	Approval    bool       `json:"requires_approval"`
-	Photo       bool       `json:"requires_photo"`
+	Author          int        `json:"author"`
+	Room            int        `json:"room_id"`
+	Paused          bool       `json:"paused"`
+	Schedule        string     `json:"frequency"`
+	Clock           string     `json:"schedule_time,omitempty"`
+	Days            []string   `json:"weekdays,omitempty"`
+	Every           int        `json:"interval_days,omitempty"`
+	AfterAcceptance bool       `json:"after_acceptance,omitempty"`
+	Rotation        []int      `json:"rotation,omitempty"`
+	Description     *string    `json:"description,omitempty"`
+	Reviewer        *int       `json:"reviewer,omitempty"`
+	ID              int        `json:"id"`
+	Version         int        `json:"version"`
+	Name            string     `json:"name"`
+	Points          int        `json:"points"`
+	DueAt           *time.Time `json:"due_utc"`
+	AssignedTo      *int       `json:"assigned_to"`
+	Approval        bool       `json:"requires_approval"`
+	Photo           bool       `json:"requires_photo"`
 }
-type Service struct{ DB *gorm.DB }
+type Service struct {
+	DB          *gorm.DB
+	BillingMode string
+	LocalAction func(*gorm.DB, Plan, Change, time.Time) error
+}
+
+func (s *Service) withDB(db *gorm.DB) *Service {
+	child := *s
+	child.DB = db
+	return &child
+}
 
 func New(db *gorm.DB) (*Service, error) { return &Service{DB: db}, db.AutoMigrate(&Session{}, &Plan{}) }
 func (s *Service) Context(uid int64, now time.Time) (out Context, err error) {
 	err = s.DB.Transaction(func(tx *gorm.DB) error {
 		f := &family.Service{DB: tx}
 		h, e := f.Current(uid)
+		var actorID int
+		var rooms []task.Room
 		if e != nil {
-			return e
-		}
-		u, e := f.Authorize(uid, h.ID)
-		if e != nil {
-			return e
-		}
-		rooms, e := (&task.Service{DB: tx}).Rooms(uid, h.ID)
-		if e != nil {
-			return e
+			actorID, e = f.Unattached(uid)
+			if e != nil {
+				return e
+			}
+			h = family.View{Name: "Без дома"}
+		} else {
+			user, e := f.Authorize(uid, h.ID)
+			if e != nil {
+				return e
+			}
+			actorID = user.ID
+			rooms, e = (&task.Service{DB: tx}).Rooms(uid, h.ID)
+			if e != nil {
+				return e
+			}
 		}
 		var row Session
 		e = tx.First(&row, "viewer=?", uid).Error
@@ -109,7 +139,7 @@ func (s *Service) Context(uid int64, now time.Time) (out Context, err error) {
 		if e != nil {
 			return e
 		}
-		out = Context{Viewer: uid, CircleID: h.ID, Revision: row.Revision, RoomID: row.RoomID, Room: name, Home: h.Name, Timezone: h.Timezone, LocalTime: now.In(loc).Format(time.RFC3339), Actor: u.ID, Owner: h.Owner, Members: h.Members, Rooms: rooms}
+		out = Context{Viewer: uid, CircleID: h.ID, Revision: row.Revision, RoomID: row.RoomID, Room: name, Home: h.Name, Timezone: h.Timezone, LocalTime: now.In(loc).Format(time.RFC3339), Actor: actorID, Owner: h.Owner, Members: h.Members, Rooms: rooms}
 		_ = json.Unmarshal([]byte(row.References), &out.References)
 		_ = json.Unmarshal([]byte(row.History), &out.History)
 		return nil
@@ -119,7 +149,7 @@ func (s *Service) Context(uid int64, now time.Time) (out Context, err error) {
 func (s *Service) SelectRoom(uid int64, room int, now time.Time) (Context, error) {
 	var out Context
 	e := s.DB.Transaction(func(tx *gorm.DB) error {
-		child := &Service{tx}
+		child := s.withDB(tx)
 		c, e := child.Context(uid, now)
 		if e != nil {
 			return e
@@ -159,11 +189,20 @@ func (s *Service) Check(c Context, now time.Time) error {
 	if fresh.CircleID != c.CircleID || fresh.RoomID != c.RoomID || fresh.Revision != c.Revision || fresh.Timezone != c.Timezone {
 		return ErrChanged
 	}
+	if c.ReplyTarget != nil {
+		fresh, e := s.CaptureReply(c.Viewer, c.CircleID, c.ReplyTarget.Kind, c.ReplyTarget.ID, now)
+		if e != nil {
+			return e
+		}
+		if fresh != *c.ReplyTarget {
+			return ErrChanged
+		}
+	}
 	return nil
 }
 func (s *Service) Remember(c Context, refs []int, user, result string, now time.Time) error {
 	return s.DB.Transaction(func(tx *gorm.DB) error {
-		child := &Service{tx}
+		child := s.withDB(tx)
 		if e := child.Check(c, now); e != nil {
 			return e
 		}
@@ -226,7 +265,29 @@ func (s *Service) Tasks(c Context, room int, now time.Time) ([]Task, error) {
 		if e = s.DB.First(&definition, "id=? AND circle_id=?", i.ChoreID, c.CircleID).Error; e != nil {
 			return nil, e
 		}
-		out = append(out, Task{ID: r.ID, Version: i.Version, Name: r.Name, Points: r.Points, DueAt: r.DueAt, AssignedTo: r.AssignedTo, Approval: definition.RequireApproval, Photo: rule.PhotoRequired, Description: definition.Description, Reviewer: rule.ReviewerID})
+		var roomID int
+		if e = s.DB.Table("hq_rooms r").Select("r.id").Joins("JOIN chore_labels cl ON cl.label_id=r.label_id").Where("r.circle_id=? AND cl.chore_id=?", c.CircleID, i.ChoreID).Scan(&roomID).Error; e != nil {
+			return nil, e
+		}
+		rotation, e := svc.Rotation(c.Viewer, c.CircleID, i.ID)
+		if e != nil {
+			return nil, e
+		}
+		taskDTO := Task{Room: roomID, Author: definition.CreatedBy, Paused: definition.Status == ch.ChoreStatusPaused, Rotation: rotation, Schedule: string(definition.FrequencyType), AfterAcceptance: definition.IsRolling, ID: r.ID, Version: i.Version, Name: r.Name, Points: r.Points, DueAt: r.DueAt, AssignedTo: r.AssignedTo, Approval: definition.RequireApproval, Photo: rule.PhotoRequired, Description: definition.Description, Reviewer: rule.ReviewerID}
+		if meta := definition.FrequencyMetadataV2; meta != nil {
+			if at, err := time.Parse(time.RFC3339, meta.Time); err == nil {
+				taskDTO.Clock = at.Format("15:04")
+			}
+			for _, d := range meta.Days {
+				if d != nil {
+					taskDTO.Days = append(taskDTO.Days, *d)
+				}
+			}
+			if definition.FrequencyType == ch.FrequencyTypeInterval {
+				taskDTO.Every = definition.Frequency
+			}
+		}
+		out = append(out, taskDTO)
 	}
 	return out, nil
 }

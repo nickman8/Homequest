@@ -256,11 +256,14 @@ try {
   await home();
   await click("Подарки");
   await click("Добавить желание");
-  await send("Книга");
+  const giftTitle = "Книга — семейный подарок 8241";
+  const giftNote = "<img src=x onerror=alert(1)> Семейная заметка 8241";
+  const giftURL = "https://example.invalid/family-gift-8241";
+  await send(giftTitle);
   await send("javascript:alert(1)");
   assert.match(last.state.text, /ссылк|URL|http/i);
-  await click("Пропустить");
-  await send("<img src=x onerror=alert(1)>");
+  await send(giftURL);
+  await send(giftNote);
   await click("Пропустить");
   await click("Сохранить");
   const owner = JSON.stringify({
@@ -330,7 +333,16 @@ try {
   assert.match(last.payload.text, /владел|нельзя|себ|передайте управление/i);
   await as(900003);
   await click("Подарки");
+  // Positive control: C really could read these fields before removal. Otherwise
+  // an empty/error response could make a privacy assertion pass vacuously.
+  await click("Подробнее");
+  for (const value of [giftTitle, giftNote, giftURL]) {
+    assert.ok(last.payload.text.includes(value), `Member cannot read ${value}`);
+  }
+  await home();
+  await click("Подарки");
   const oldGift = token("Подробнее");
+  const oldGiftCard = last;
   await as(900001);
   await click("Настройки");
   await click("Участники");
@@ -339,8 +351,41 @@ try {
   await click("Управление");
   await click("Исключить");
   await click("Подтвердить");
-  const gone = await raw({ viewer: 900003, action: oldGift });
-  assert.ok(!JSON.stringify(gone).includes("<img"));
+  assert.equal(last.members.length, 2, "C was not removed from the household");
+  await as(900003);
+  assert.equal(last.family_id, 0, "Removed member still has an active household");
+  // Reopen the exact previously delivered card and click it through the real
+  // HTML bridge. Telegram users retain old messages after membership changes.
+  await page.evaluate((result: any) => (window as any).previewReceive(result), oldGiftCard);
+  const gone = await click("Подробнее");
+  const assertRevoked = (response: any) => {
+    assert.match(response.payload?.text || "", /Доступ к этому дому закончился/);
+    assert.equal(response.state, null, "Denied response exposed a family card");
+    assert.equal(response.family_id, 0);
+    for (const key of ["members", "tasks_open", "shopping_items", "reward_catalog", "redemptions", "attempts"]) {
+      assert.deepEqual(response[key] ?? [], [], `Revoked member received ${key}`);
+    }
+    assert.equal(response.balance, 0);
+    assert.equal(response.week, 0);
+    assert.equal(response.xp, 0);
+    assert.ok(response.deliveries.length > 0, "Denial must produce a fresh response");
+    for (const delivery of response.deliveries) {
+      assert.equal(delivery.Viewer, 900003);
+      assert.equal(delivery.Method, "sendMessage", "Revoked member received media/widget delivery");
+      assert.match(JSON.parse(delivery.Payload).text || "", /Доступ к этому дому закончился/);
+    }
+    // Include every payload and queued delivery, not only a literal HTML tag:
+    // harmless escaping must not disguise leaked title, note, URL or photo IDs.
+    const serialized = JSON.stringify(response);
+    for (const value of [giftTitle, "Семейная заметка 8241", giftURL, "fixture_photo_one", "fixture_photo_two"]) {
+      assert.ok(!serialized.includes(value), `Revoked member received private value: ${value}`);
+    }
+  };
+  assertRevoked(gone);
+  await page.locator("#reply").waitFor({ state: "visible" });
+  assert.match(await page.locator("#reply").textContent(), /Доступ к этому дому закончился/);
+  assert.equal(await page.locator("iframe").isVisible(), false, "Old family card stayed visible after denial");
+  assertRevoked(await raw({ action: oldGift }));
   // Ownership transfer immediately revokes old admin actions; invitations can be revoked.
   await as(900001);
   await points();

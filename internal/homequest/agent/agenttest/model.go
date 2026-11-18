@@ -87,11 +87,11 @@ func (m *Model) Generate(_ context.Context, messages []*schema.Message, _ ...mod
 	if m.Operation == "select_room" {
 		return call("select_room", map[string]any{"room_id": m.RoomID}), nil
 	}
-	if m.Operation == "task_create" || m.Operation == "reward_create" || m.Operation == "shopping_add" {
+	if m.Operation == "wish_create" || m.Operation == "task_create" || m.Operation == "reward_create" || m.Operation == "shopping_add" {
 		return call("prepare_changes", map[string]any{"changes": []agent.Change{{Operation: m.Operation, Name: m.Name, Points: m.Points, Description: m.Description, Items: m.Items, AssignedTo: m.AssignedTo, Reviewer: m.Reviewer, Approval: m.Approval, Photo: m.Photo, Due: m.Due}}}), nil
 	}
 	kind := ""
-	for _, k := range []string{"shopping", "reward", "redemption"} {
+	for _, k := range []string{"wish", "room", "report", "handoff", "shopping", "reward", "redemption"} {
 		if strings.HasPrefix(m.Operation, k+"_") {
 			kind = k
 		}
@@ -117,7 +117,10 @@ func (m *Model) Generate(_ context.Context, messages []*schema.Message, _ ...mod
 			if m.ForgedSnapshot {
 				change.Snapshot = strings.Repeat("0", 64)
 			}
-			if m.Operation == "reward_edit" {
+			if m.Operation == "room_rename" {
+				change.Name = m.Name
+			}
+			if m.Operation == "wish_edit" || m.Operation == "reward_edit" {
 				change.Name = m.Name
 				change.Points = m.Points
 				change.Description = m.Description

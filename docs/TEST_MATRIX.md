@@ -201,3 +201,43 @@ DB-транзакции покрывают Go/race tests. Это не live Teleg
 PASS. Старые suites пройдены повторно вместе с новыми; сокращение legacy assistant
 с 43 до 42 состояний связано с явным текстовым ответом при отмене вместо старой
 карточки. Live completion/человеческое аудио в этом прогоне не запускались.
+
+## Приёмка расширенного голосового агента, 18 ноября 2026
+
+| Действия пользователя | Доступ и границы | Проверка |
+|---|---|---|
+| Первый дом, вступление, выбор дома, участники, приглашения | Создание требует названия и IANA-зоны. Join-ссылка обрабатывается локально, права на управление проверяются снова при применении | TestAgentFirstHomeRequiresExplicitConfirmedTimezone, TestJoinLinkStaysLocal, REC17–18 |
+| Комнаты, готовые наборы, задания, расписание, очередь | Доступность задания зависит от исполнителя. Настройки меняет автор или владелец. Одна просьба может создать комнату и назначить её следующему новому заданию | TestAtomicTaskInNewRoom, TestPersistedEmptyOffsetsAndCustomizedPreset, plans-e2e, agent-family-e2e |
+| Отчёты, подтверждение, undo, передача | Требования фото и другого проверяющего действуют для всех точек входа. Файл отправляется после проверки доступа. Просмотр агентом получает только статус фото | E03, TestEntryPointsAgreeOnTaskCompletion, agent-family-e2e, TestRotationAcceptanceDepartureAndHandoffRace |
+| Настройки, Premium, напоминания, отдых | Владелец меняет семейные настройки. Участник меняет свои тихие часы/отпуск. Сервер проверяет режим биллинга при apply | TestSettingsPlanChecksOwnerAndRuntimeModeAtApply, TestFamilyReminderPlanThroughButtonsAndRestart, agent-family-e2e |
+| Баллы, достижения, статистика, недельная цель | Баланс и XP читаются из тех же событий, что в интерфейсе. Расширенная статистика проверяет семейный entitlement | E06, E10, plans-e2e, assistant-e2e |
+| Покупки и награды, отказ, выдача и возврат | Для изменения прочитанного объекта сервер привязывает его версию. Сумма и право выдачи проверяются при подтверждении | agent-resources-e2e, REC10–15, TestLiveEinoRewardPlan |
+| Подарки и тайная бронь | Правило проекции действует и на snapshot. Подтверждение секретной операции оставляет память модели прежней | TestAgentGiftSurpriseAndRoomLifecycle, TestSecretGiftConfirmationLeavesNoModelMemory, household-e2e |
+| Ответ на карточку, включая голос | Учитываются автор карточки, конкретный получатель, семья, версия и срок. Несколько целей требуют уточнения. После изменения Widget учитывается последнее подтверждённо доставленное состояние сообщения | REP01–10 в agent-reply-e2e, TestReplyResourceScopeEnforcedByPrepareAndApply, TestReplyToEditedWidgetUsesDeliveredStateNotOriginalKeyboard |
+| Восстановление и изменение времени | Свежий прерванный расчёт можно повторить один раз. Истёкшие данные очищаются. Календарь сохраняет выбранное время даже при 30-минутном переходе часов | TestInterruptedReasoningRetriesOnceWhileCurrent, TestDailyWallClockSurvivesCreatingRuleAroundGap |
+| Три способа выполнить одно дело | Одинаковые данные и права через Telegram-кнопку, widget_query и текстовый план; повторы дают одно принятое выполнение и одинаковые 13 баллов | TestEntryPointsAgreeOnTaskCompletion, реальные обработчики, SQLite, управляемые transport и модель |
+
+Число операций в Catalog характеризует доступные команды. Автоматические пути выбирают представительные комбинации операций, ролей и состояний.
+Независимый обзор воспроизвёл дефекты старой карточки после ухода, неоднозначного списка и reply к перелистанному Widget. Для них сохранены регрессии.
+
+Внешний smoke использует разрешённый VyceAI и временную семейную SQLite.
+`TestLiveEinoRoomPlan`, `TestLiveEinoRewardPlan`, `TestLiveEinoWishPlan`, `TestLiveEinoRussianAudio` прошли вместе за 67,8 с.
+В предварительных запусках запрос награды несколько раз завершался безопасным отказом. Сервер теперь сам привязывает прочитанный snapshot; отдельные переданные моделью несовместимые поля по-прежнему блокируются.
+Русский аудиофайл генерировался локально Piper 1.3.0, голос ru_RU-irina-medium, и кодировался в Ogg/Opus. Тест использовал обычный faster-whisper small CPU int8 и реальный tool-calling с начислением 10 баллов после подтверждения. Живая речь человека и доставка голосового через Telegram ждут отдельной приёмки.
+
+Команда для повторения на разрешённом тестовом аудио из внешнего приватного каталога:
+
+```sh
+HQ_AGENT_LIVE=1 HQ_LIVE_RUSSIAN_AUDIO=/absolute/private/sample.ogg \
+STT_PYTHON=/absolute/private/stt-venv/bin/python STT_MODEL_DIR=/absolute/private/stt-models \
+HOMEQUEST_SECRETS_FILE=/absolute/private/secrets.json \
+go test ./internal/homequest/agent -run '^TestLiveEino' -count=1 -v
+```
+
+**Финальный локальный прогон 18 ноября.** `go test ./...`, race для agent/bot/task и
+`make harness` завершились с кодом 0. Десять подробных браузерных путей дали
+177 + 101 + 80 + 42 + 67 + 94 + 100 + 96 + 49 + 76 = **882 отрисованных состояния**.
+Официальный runtime проверил 271 различную проекцию на 200 px и 24 сочетания темы/ширины.
+Независимый агент отдельно прошёл REP01–10 (76 состояний). Telegram transport в этих
+тестах управляемый. На копии рабочей БД два запуска штатной миграции и проверка
+`PRAGMA integrity_check` прошли успешно.

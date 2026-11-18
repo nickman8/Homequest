@@ -45,3 +45,15 @@ func (s *Service) Switch(tg int64, circle int) error {
 		return tx.Model(&Identity{}).Where("telegram_id=?", tg).Updates(map[string]any{"step": "", "draft": ""}).Error
 	})
 }
+
+// Unattached returns only a registered, enabled actor with no selected home.
+func (s *Service) Unattached(tg int64) (int, error) {
+	user, e := actor(s.DB, tg)
+	if e != nil {
+		return 0, e
+	}
+	if user.CircleID != 0 {
+		return 0, ErrDenied
+	}
+	return user.ID, nil
+}

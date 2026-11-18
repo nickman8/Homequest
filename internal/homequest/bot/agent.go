@@ -8,7 +8,9 @@ import (
 	"strings"
 
 	"donetick.com/core/internal/homequest/agent"
+	"donetick.com/core/internal/homequest/billing"
 	"donetick.com/core/internal/homequest/family"
+	"donetick.com/core/internal/homequest/stats"
 	"donetick.com/core/internal/homequest/task"
 	"gorm.io/gorm"
 )
@@ -33,6 +35,37 @@ func (a agentAccess) Resources(kind string) ([]agent.Resource, error) {
 	}
 	return (&agent.Service{DB: a.bot.DB}).Resources(a.scope, kind, a.bot.Now())
 }
+func (a agentAccess) Overview(topic string) (any, error) {
+	var j AIJob
+	if e := a.bot.DB.First(&j, "id=? AND state=?", a.job.ID, "processing").Error; e != nil {
+		return nil, e
+	}
+	if e := (&agent.Service{DB: a.bot.DB}).Check(a.scope, a.bot.Now()); e != nil {
+		return nil, e
+	}
+	uid, id, now := j.Viewer, j.CircleID, a.bot.Now()
+	service := &stats.Service{DB: a.bot.DB}
+	switch topic {
+	case "weekly":
+		return service.Weekly(uid, id, now, 0)
+	case "last_week":
+		return service.Weekly(uid, id, now, -1)
+	case "presets":
+		presets := map[string][]task.PresetTask{}
+		for key := range task.PresetNames {
+			presets[key] = task.PresetTasks(key)
+		}
+		return presets, nil
+	case "badges":
+		return service.Badges(uid, id, now)
+	case "extended":
+		return service.Extended(uid, id, now)
+	case "premium":
+		return (&billing.Service{DB: a.bot.DB}).Active(uid, id, now)
+	default:
+		return nil, agent.ErrPlan
+	}
+}
 func (a agentAccess) Account() (agent.Account, error) {
 	var job AIJob
 	if a.bot.DB.First(&job, "id=? AND state=?", a.job.ID, "processing").Error != nil {
@@ -45,7 +78,7 @@ func (b *Bot) agentHome(uid, msg int64) error {
 	if e != nil {
 		return b.home(uid, msg)
 	}
-	text := c.Label() + "\nЗадания, сроки, повторения, покупки и награды — текстом или голосом. Изменения сначала покажу для проверки."
+	text := c.Label() + "\nПопросите помочь с делами, покупками, подарками или настройками дома. Изменения сначала покажу для проверки."
 	if b.Agent == nil {
 		text = c.Label() + "\nПолный режим агента пока выключен. Доступен прежний помощник для выполнения и создания заданий."
 	}
@@ -96,6 +129,7 @@ func (b *Bot) agentAction(uid, msg int64, a Action) (bool, error) {
 	}
 	return false, nil
 }
+
 func (b *Bot) jobScope(job *AIJob) (agent.Context, error) {
 	c, e := (&agent.Service{DB: b.DB}).Context(job.Viewer, b.Now())
 	if e != nil {
@@ -103,6 +137,18 @@ func (b *Bot) jobScope(job *AIJob) (agent.Context, error) {
 	}
 	if c.CircleID != job.CircleID || c.RoomID != job.RoomID || c.Revision != job.ContextRevision || c.Timezone != job.Timezone {
 		return c, agent.ErrChanged
+	}
+	if job.ReplyTarget.Kind != "" {
+		if e := (&agent.Service{DB: b.DB}).BindReply(&c, job.ReplyTarget, b.Now()); e != nil {
+			return c, e
+		}
+		return c, nil
+	}
+	if job.ReplyTask != 0 {
+		target := agent.ReplyTarget{Kind: "task", ID: job.ReplyTask, Version: job.ReplyVersion}
+		if e := (&agent.Service{DB: b.DB}).BindReply(&c, target, b.Now()); e != nil {
+			return c, e
+		}
 	}
 	return c, nil
 }
@@ -134,7 +180,7 @@ func (b *Bot) processAgent(ctx context.Context, job *AIJob) error {
 				return child.say(job.Viewer, "Нет актуального плана для подтверждения. Опишите действие или откройте его карточку.")
 			}
 			if phrase == "нет" || phrase == "отмена" {
-				if e := (&agent.Service{DB: tx}).Cancel(job.Viewer, job.ConfirmPlan, b.Now()); e != nil {
+				if e := (&agent.Service{DB: tx, BillingMode: b.BillingMode, LocalAction: b.agentLocalAction}).Cancel(job.Viewer, job.ConfirmPlan, b.Now()); e != nil {
 					return e
 				}
 				if e := tx.Model(&target).Update("state", "cancelled").Error; e != nil {
@@ -156,7 +202,7 @@ func (b *Bot) processAgent(ctx context.Context, job *AIJob) error {
 		if tx.First(&current, "id=? AND state=?", job.ID, "processing").Error != nil {
 			return nil
 		}
-		if e := (&agent.Service{DB: tx}).Check(scope, b.Now()); e != nil {
+		if e := (&agent.Service{DB: tx, BillingMode: b.BillingMode, LocalAction: b.agentLocalAction}).Check(scope, b.Now()); e != nil {
 			return e
 		}
 		if e := tx.Model(&agent.Plan{}).Where("viewer=? AND state=?", job.Viewer, "pending").Updates(map[string]any{"state": "superseded", "changes": "", "summary": ""}).Error; e != nil {
@@ -185,7 +231,7 @@ func (b *Bot) processAgent(ctx context.Context, job *AIJob) error {
 		child := *b
 		child.DB = tx
 		child.Family = &family.Service{DB: tx}
-		svc := &agent.Service{DB: tx}
+		svc := &agent.Service{DB: tx, BillingMode: b.BillingMode, LocalAction: b.agentLocalAction}
 		if e = svc.Check(scope, b.Now()); e != nil {
 			return e
 		}
@@ -212,6 +258,11 @@ func (b *Bot) processAgent(ctx context.Context, job *AIJob) error {
 			job.PlanID = p.ID
 			if e = tx.Model(job).Updates(map[string]any{"plan_id": p.ID, "state": "confirm", "text": "", "voice_id": ""}).Error; e != nil {
 				return e
+			}
+			for _, v := range result.Changes {
+				if privateGiftAction(v.Operation) {
+					return child.agentPreview(job, 0, 0)
+				}
 			}
 			if e = svc.Remember(scope, result.References, inputText, "Подготовлен план; ещё не применён: "+p.Summary, b.Now()); e != nil {
 				return e
@@ -262,7 +313,12 @@ func (b *Bot) agentPreview(job *AIJob, msg int64, page int) error {
 	if page < 0 || page >= pages {
 		return agent.ErrPlan
 	}
-	text := c.Label() + fmt.Sprintf("\nЧасть плана: %d из %d\n", page+1, pages) + parts[page]
+	heading := c.Label()
+	var operations []agent.Change
+	if json.Unmarshal([]byte(p.Changes), &operations) == nil && len(operations) > 1 {
+		heading += fmt.Sprintf(" · Действий: %d", len(operations))
+	}
+	text := heading + fmt.Sprintf("\nЧасть плана: %d из %d\n", page+1, pages) + parts[page]
 	opts := []string{}
 	if page > 0 {
 		opts = append(opts, fmt.Sprintf("agent_page:%d:%d", job.ID, page-1), "Предыдущая часть")
@@ -275,15 +331,27 @@ func (b *Bot) agentPreview(job *AIJob, msg int64, page int) error {
 	opts = append(opts, fmt.Sprintf("ai_cancel:%d", job.ID), "Отмена")
 	return b.card(job.Viewer, msg, "Проверьте изменения", text, job.CircleID, opts...)
 }
+func privateGiftAction(op string) bool {
+	return op == "wish_claim" || op == "wish_release" || op == "wish_purchase"
+}
 func (b *Bot) applyAgent(job *AIJob) error {
 	// Called inside the update/confirmation transaction: effects, job and deliveries commit together.
-	svc := &agent.Service{DB: b.DB}
+	svc := &agent.Service{DB: b.DB, BillingMode: b.BillingMode, LocalAction: b.agentLocalAction}
 	effects, e := svc.Apply(job.Viewer, job.PlanID, b.Now())
 	if e != nil {
 		return b.say(job.Viewer, "План больше нельзя применить: данные или права изменились. Отправьте просьбу заново.")
 	}
 	if e = b.DB.Model(job).Updates(map[string]any{"state": "done", "text": "", "voice_id": "", "command": "", "candidates": ""}).Error; e != nil {
 		return e
+	}
+	if len(effects) == 1 {
+		switch effects[0].Operation {
+		case "family_create", "family_switch", "family_leave":
+			if e := b.Family.SetStep(job.Viewer, "", ""); e != nil {
+				return e
+			}
+			return b.home(job.Viewer, 0)
+		}
 	}
 	photos := 0
 	for _, effect := range effects {
@@ -298,6 +366,15 @@ func (b *Bot) applyAgent(job *AIJob) error {
 	}
 	refs := []int{}
 	for _, effect := range effects {
+		if effect.Operation == "report_photo" {
+			file, e := (&task.Service{DB: b.DB}).Photo(job.Viewer, job.CircleID, effect.ID)
+			if e != nil {
+				return e
+			}
+			if e = b.queue("sendPhoto", map[string]any{"chat_id": job.Viewer, "photo": file, "caption": "Фотоотчёт"}); e != nil {
+				return e
+			}
+		}
 		if strings.HasPrefix(effect.Operation, "task_") {
 			refs = append(refs, effect.ID)
 		}
@@ -318,9 +395,17 @@ func (b *Bot) applyAgent(job *AIJob) error {
 	if e != nil {
 		return e
 	}
-	raw, _ := json.Marshal(effects)
-	if e = svc.Remember(c, refs, "Подтверждение плана", "Применён: "+string(raw), b.Now()); e != nil {
-		return e
+	publicEffects := make([]agent.Effect, 0, len(effects))
+	for _, effect := range effects {
+		if !privateGiftAction(effect.Operation) {
+			publicEffects = append(publicEffects, effect)
+		}
+	}
+	if len(publicEffects) > 0 {
+		raw, _ := json.Marshal(publicEffects)
+		if e = svc.Remember(c, refs, "Подтверждение плана", "Применён: "+string(raw), b.Now()); e != nil {
+			return e
+		}
 	}
 	if e = b.refreshFamilyViews(job.Viewer, job.CircleID); e != nil {
 		return e
