@@ -1,0 +1,204 @@
+<style>.panel{padding:1rem;color:var(--tg-theme-text-color);background:var(--tg-theme-bg-color);border-radius:1rem}
+.brand{display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem;color:var(--tg-theme-hint-color);font-size:.8em}
+.mark{display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:1rem;background:var(--tg-theme-secondary-bg-color);color:var(--tg-theme-accent-text-color)}
+.mark svg{width:22px;height:22px;display:none}
+.brand span{letter-spacing:.04em}
+h3{font-size:1.25em;line-height:1.2;margin:0 0 .5rem;overflow-wrap:break-word}
+#text{margin:0 0 1rem;white-space:pre-wrap;overflow-wrap:break-word;line-height:1.35}
+#buttons{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
+button{min-height:44px;padding:.5rem;margin:0;border:0;border-radius:1rem;font:inherit;line-height:1.2;background:var(--tg-theme-secondary-bg-color);color:var(--tg-theme-text-color);overflow-wrap:break-word}
+button:first-child{grid-column:1 / -1;background:var(--tg-theme-button-color);color:var(--tg-theme-button-text-color)}
+button:last-child:nth-child(even){grid-column:1 / -1}
+button:active{opacity:.8}
+button:disabled{color:var(--tg-theme-hint-color);background:var(--tg-theme-secondary-bg-color)}
+#feedback{font-size:.8em;color:var(--tg-theme-hint-color);margin:.5rem 0 0;line-height:1.25}
+@media(max-width:239px){#buttons{grid-template-columns:1fr}.panel{padding:.5rem}}
+
+.compact .brand{display:none}
+.compact h3{font-size:1.1em}
+</style><div class="panel"><div class="brand"><div class="mark">
+<svg id="icon-house"
+  class="lucide lucide-house"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8" />
+  <path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+</svg>
+
+<svg id="icon-circle-check"
+  class="lucide lucide-circle-check"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="10" />
+  <path d="m16 9-5.5 5.5L8 12" />
+</svg>
+
+<svg id="icon-gift"
+  class="lucide lucide-gift"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M12 7v14" />
+  <path d="M20 11v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8" />
+  <path d="M7.5 7a1 1 0 0 1 0-5A4.8 8 0 0 1 12 7a4.8 8 0 0 1 4.5-5 1 1 0 0 1 0 5" />
+  <rect x="3" y="7" width="18" height="4" rx="1" />
+</svg>
+
+<svg id="icon-trophy"
+  class="lucide lucide-trophy"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M10 14.66V17a1 1 0 0 1-1 1 2 2 0 0 0-2 2v2" />
+  <path d="M14 14.66V17a1 1 0 0 0 1 1 2 2 0 0 1 2 2v2" />
+  <path d="M17.916 10H19.5A2.5 2.5 0 0 0 22 7.5V5a1 1 0 0 0-1-1h-3" />
+  <path d="M4 22h16" />
+  <path d="M6 9a6 6 0 0 0 12 0V3a1 1 0 0 0-1-1H7a1 1 0 0 0-1 1z" />
+  <path d="M6.084 10H4.5A2.5 2.5 0 0 1 2 7.5V5a1 1 0 0 1 1-1h3" />
+</svg>
+
+<svg id="icon-calendar-days"
+  class="lucide lucide-calendar-days"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M8 2v3" />
+  <path d="M16 2v3" />
+  <rect x="3" y="3" width="18" height="18" rx="2" />
+  <path d="M3 9h18" />
+  <path d="M8 13h.01" />
+  <path d="M12 13h.01" />
+  <path d="M16 13h.01" />
+  <path d="M8 17h.01" />
+  <path d="M12 17h.01" />
+  <path d="M16 17h.01" />
+</svg>
+
+<svg id="icon-mic"
+  class="lucide lucide-mic"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M12 19v3" />
+  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+  <rect x="9" y="2" width="6" height="13" rx="3" />
+</svg>
+
+<svg id="icon-users"
+  class="lucide lucide-users"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+  <path d="M16 3.128a4 4 0 0 1 0 7.744" />
+  <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+  <circle cx="9" cy="7" r="4" />
+</svg>
+
+<svg id="icon-settings"
+  class="lucide lucide-settings"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
+  <circle cx="12" cy="12" r="3" />
+</svg>
+</div><span>HOMEQUEST · НАШ ДОМ</span></div><h3 id="title">Дом</h3><p id="text">Загрузка</p><div id="buttons"></div><p id="feedback"></p></div><script>var W=TelegramWidget,serial=0,page=0;
+function feedback(text){document.getElementById('feedback').textContent=text}
+function draw(){
+ var s;try{s=JSON.parse(W.chatData||'{}')}catch(e){s={}}
+ serial++;
+ document.getElementById('title').textContent=s.title||'Дом';
+ var title=s.title||'',labels=(s.buttons||[]).map(function(b){return b.label}).join(' '),icon='house';
+ if(/балл|вклад|Рейтинг|Достижен|Premium/.test(title))icon='trophy';
+ else if(/фото|Отчёт|подтвержден|Готово/.test(title))icon='circle-check';
+ else if(/Участник|Исполнитель|Проверяющий/.test(title))icon='users';
+ else if(/Помощник|Черновик/.test(title))icon='mic';
+ else if(/Настрой|Управление/.test(title))icon='settings';
+ else if(/Напомин|расписан/.test(title))icon='calendar-days';
+ else if(/Забронировать|бронь|Запросить|Заявки/.test(labels)||/Подар|Наград/.test(title))icon='gift';
+ else if(/Выполнено/.test(labels)||title==='Сегодня')icon='circle-check';
+ document.querySelectorAll('.mark svg').forEach(function(node){node.style.display=node.id==='icon-'+icon?'block':'none'});
+ document.querySelector('.panel').className=title.length>35?'panel compact':'panel';
+ var root=document.getElementById('buttons');root.textContent='';
+ var narrow=window.innerWidth<240,buttons=s.buttons||[],size=title.length>35?(narrow?1:2):(narrow?3:Math.max(1,buttons.length));
+ var text=Array.from(s.text||'Откройте /start, чтобы вернуться домой'),limit=narrow?60:180,textPages=Math.ceil(text.length/limit),review=title==='Проверьте изменения',pages=review?textPages-1+Math.max(1,Math.ceil(buttons.length/size)):Math.max(textPages,Math.ceil(buttons.length/size));
+ if(page>=pages)page=0;
+ var textPage=Math.min(page,textPages-1);
+ document.getElementById('text').textContent=(textPage?'…':'')+text.slice(textPage*limit,(textPage+1)*limit).join('')+(textPage+1<textPages?'…':'');
+ var buttonPage=review?Math.max(0,page-textPages+1):page;
+ var visible=review&&page<textPages-1?buttons.filter(function(b){return b.label==='Отмена'}):buttons.slice(buttonPage*size,(buttonPage+1)*size);
+ visible.forEach(function(item){
+  var b=document.createElement('button');b.textContent=item.label;
+  b.onclick=function(){
+   var version=serial;b.disabled=true;feedback('Отправляю…');
+   function finish(text){b.disabled=false;if(serial===version)feedback(text)}
+   try{W.request(item.action).then(function(){finish('Запрос принят. Ответ появится в карточке или сообщении.')},function(e){
+    var errors={RATE_LIMITED:'Слишком быстро. Подождите немного и повторите.',TIMEOUT:'Ответ задержался. Можно повторить — действие не задвоится.',NOT_ALLOWED:'Откройте свежую карточку через /start.',BUSY:'Дождитесь ответа на предыдущее действие.'};
+    finish(errors[e.code]||'Не удалось связаться. Попробуйте снова.')
+   })}catch(e){finish('Не удалось отправить. Попробуйте снова.')}
+  };root.appendChild(b)
+ });
+ if(pages>1){var next=document.createElement('button');next.textContent=(page+1<pages?(textPages>1?'Далее':'Ещё действия'):'К началу')+' · '+((page+1)%pages+1)+'/'+pages;next.onclick=function(){page=(page+1)%pages;draw()};root.appendChild(next)}
+ feedback('Вместе заботимся о доме');
+}
+W.onEvent('chatDataChanged',function(){page=0;draw()});draw();W.ready();
+</script>

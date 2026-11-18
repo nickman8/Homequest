@@ -1,0 +1,41 @@
+// Source: cmintey/wishlist ee56cb9635a96a594140a95d57bc3e37322a750b
+// Reference input for the Go model adaptation, not a second database schema.
+model Item {
+    id          Int         @id @unique @default(autoincrement())
+    name        String
+    price       String?
+    itemPriceId String?
+    itemPrice   ItemPrice?  @relation(fields: [itemPriceId], references: [id], onDelete: SetNull)
+    url         String?
+    note        String?
+    imageUrl    String?
+    quantity    Int?
+    mostWanted  Boolean     @default(false)
+    user        User        @relation(name: "MyItems", fields: [userId], references: [id], onDelete: Cascade)
+    userId      String
+    createdBy   User        @relation(name: "CreatedItems", fields: [createdById], references: [id], onDelete: Cascade)
+    createdById String
+    lists       ListItem[]
+    claims      ItemClaim[]
+
+    @@index([userId])
+    @@map("items")
+}
+
+model ItemClaim {
+    id                String      @id @unique @default(uuid())
+    item              Item        @relation(fields: [itemId], references: [id], onDelete: Cascade)
+    itemId            Int
+    list              List        @relation(fields: [listId], references: [id], onDelete: Cascade)
+    listId            String
+    claimedBy         User?       @relation(fields: [claimedById], references: [id], onDelete: Cascade)
+    claimedById       String?
+    publicClaimedBy   SystemUser? @relation(fields: [publicClaimedById], references: [id], onDelete: Cascade)
+    publicClaimedById String?
+    purchased         Boolean     @default(false)
+    quantity          Int         @default(1)
+
+    @@index([itemId])
+    @@index([claimedById])
+    @@map("list_item_claim")
+}
